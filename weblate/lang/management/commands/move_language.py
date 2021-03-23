@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -35,7 +35,7 @@ class Command(BaseCommand):
         for translation in source.translation_set.iterator():
             other = translation.component.translation_set.filter(language=target)
             if other.exists():
-                self.stderr.write("Already exists: {}".format(translation))
+                self.stderr.write(f"Already exists: {translation}")
                 continue
             translation.language = target
             translation.save()
@@ -53,7 +53,6 @@ class Command(BaseCommand):
         for group in source.group_set.iterator():
             group.languages.remove(source)
             group.languages.add(target)
-        source.term_set.update(language=target)
 
         for plural in source.plural_set.iterator():
             try:

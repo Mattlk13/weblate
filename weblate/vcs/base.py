@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -50,7 +50,7 @@ class RepositoryException(Exception):
 
     def get_message(self):
         if self.retcode != 0:
-            return "{0} ({1})".format(self.args[0], self.retcode)
+            return "{} ({})".format(self.args[0], self.retcode)
         return self.args[0]
 
     def __str__(self):
@@ -95,6 +95,10 @@ class Repository:
                 self.init()
 
     @classmethod
+    def get_remote_branch(cls, repo: str):
+        return cls.default_branch
+
+    @classmethod
     def add_breadcrumb(cls, message, **data):
         # Add breadcrumb only if settings are already loaded,
         # we do not want to force loading settings early
@@ -107,7 +111,7 @@ class Repository:
 
     def ensure_config_updated(self):
         """Ensures the configuration is periodically checked."""
-        cache_key = "sp-config-check-{}".format(self.component.pk)
+        cache_key = f"sp-config-check-{self.component.pk}"
         if cache.get(cache_key) is None:
             self.check_config()
             cache.set(cache_key, True, 86400)
@@ -155,6 +159,7 @@ class Repository:
         fullcmd: bool = False,
         raw: bool = False,
         local: bool = False,
+        stdin: Optional[str] = None,
     ):
         """Execute the command using popen."""
         if args is None:
@@ -162,15 +167,22 @@ class Repository:
         if not fullcmd:
             args = [cls._cmd] + list(args)
         text_cmd = " ".join(args)
+        kwargs = {}
+        # These are mutually exclusive, on Python 3.7+ it is posible
+        # to pass stdin = None, but on 3.6 stdin has to be omitted
+        if stdin is not None:
+            kwargs["input"] = stdin
+        else:
+            kwargs["stdin"] = subprocess.PIPE
         process = subprocess.run(
             args,
             cwd=cwd,
             env={} if local else cls._getenv(),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT if merge_err else subprocess.PIPE,
-            stdin=subprocess.PIPE,
             universal_newlines=not raw,
             check=False,
+            **kwargs,
         )
         cls.add_breadcrumb(
             text_cmd,
@@ -179,7 +191,6 @@ class Repository:
             stderr=process.stderr,
             cwd=cwd,
         )
-        cls.log("exec {0} [retcode={1}]".format(text_cmd, process.returncode))
         if process.returncode:
             raise RepositoryException(
                 process.returncode, process.stdout + (process.stderr or "")
@@ -192,6 +203,7 @@ class Repository:
         needs_lock: bool = True,
         fullcmd: bool = False,
         merge_err: bool = True,
+        stdin: Optional[str] = None,
     ):
         """Execute command and caches its output."""
         if needs_lock:
@@ -202,17 +214,22 @@ class Repository:
         is_status = args[0] == self._cmd_status[0]
         try:
             self.last_output = self._popen(
-                args, self.path, fullcmd=fullcmd, local=self.local, merge_err=merge_err
+                args,
+                self.path,
+                fullcmd=fullcmd,
+                local=self.local,
+                merge_err=merge_err,
+                stdin=stdin,
             )
         except RepositoryException as error:
-            if not is_status:
+            if not is_status and not self.local:
                 self.log_status(error)
             raise
         return self.last_output
 
     def log_status(self, error):
         try:
-            self.log("failure {}".format(error))
+            self.log(f"failure {error}")
             self.log(self.status())
         except RepositoryException:
             pass
@@ -239,12 +256,12 @@ class Repository:
         )
 
     @classmethod
-    def _clone(cls, source, target, branch=None):
+    def _clone(cls, source: str, target: str, branch: str):
         """Clone repository."""
         raise NotImplementedError()
 
     @classmethod
-    def clone(cls, source, target, branch=None, component=None):
+    def clone(cls, source: str, target: str, branch: str, component=None):
         """Clone repository and return object for cloned repository."""
         SSH_WRAPPER.create()
         cls._clone(source, target, branch)
@@ -317,7 +334,7 @@ class Repository:
 
     def get_revision_info(self, revision):
         """Return dictionary with detailed revision information."""
-        key = "rev-info-{}-{}".format(self.get_identifier(), revision)
+        key = f"rev-info-{self.get_identifier()}-{revision}"
         result = cache.get(key)
         if not result:
             result = self._get_revision_info(revision)
@@ -388,7 +405,7 @@ class Repository:
             data = handle.read()
         if extra:
             objhash.update(extra.encode())
-        objhash.update("blob {0}\0".format(len(data)).encode("ascii"))
+        objhash.update("blob {}\0".format(len(data)).encode("ascii"))
         objhash.update(data)
 
     def get_object_hash(self, path):
@@ -414,7 +431,9 @@ class Repository:
 
         return objhash.hexdigest()
 
-    def configure_remote(self, pull_url, push_url, branch):
+    def configure_remote(
+        self, pull_url: str, push_url: str, branch: str, fast: bool = True
+    ):
         """Configure remote repository."""
         raise NotImplementedError()
 
@@ -487,7 +506,7 @@ class Repository:
         )
 
     def get_remote_branch_name(self):
-        return "origin/{0}".format(self.branch)
+        return f"origin/{self.branch}"
 
     def list_remote_branches(self):
         return []

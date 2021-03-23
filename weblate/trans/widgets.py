@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -25,7 +25,6 @@ import gi
 from django.conf import settings
 from django.template.loader import render_to_string
 from django.urls import reverse
-from django.utils.encoding import force_str
 from django.utils.formats import number_format
 from django.utils.html import escape
 from django.utils.translation import get_language
@@ -157,7 +156,7 @@ class BitmapWidget(ContentWidget):
     def get_column_fonts(self):
         return [
             Pango.FontDescription("Source Sans Pro {}".format(self.font_size * 1.5)),
-            Pango.FontDescription("Source Sans Pro {}".format(self.font_size)),
+            Pango.FontDescription(f"Source Sans Pro {self.font_size}"),
         ]
 
     def render_additional(self, ctx):
@@ -247,12 +246,17 @@ class NormalWidget(BitmapWidget):
     offset = 10
     verbose = gettext_lazy("Big status badge")
 
+    def number_format(self, total):
+        total_format = "%s"
+        if total > 99999:
+            total = (total // 100) / 10
+            total_format = "%sk"
+        return total_format % number_format(total, force_grouping=True)
+
     def get_columns(self):
         return [
             [
-                self.head_template.format(
-                    number_format(self.total, force_grouping=True)
-                ),
+                self.head_template.format(self.number_format(self.total)),
                 self.foot_template.format(
                     npgettext(
                         "Label on enage page", "String", "Strings", self.total
@@ -260,9 +264,7 @@ class NormalWidget(BitmapWidget):
                 ),
             ],
             [
-                self.head_template.format(
-                    number_format(self.languages, force_grouping=True)
-                ),
+                self.head_template.format(self.number_format(self.languages)),
                 self.foot_template.format(
                     npgettext(
                         "Label on enage page", "Language", "Languages", self.languages
@@ -432,7 +434,7 @@ class MultiLanguageWidget(SVGWidget):
             percent = stats.translated_percent
             if self.color == "auto":
                 color = get_percent_color(percent)
-            language_name = force_str(language)
+            language_name = str(language)
 
             language_width = max(
                 language_width,

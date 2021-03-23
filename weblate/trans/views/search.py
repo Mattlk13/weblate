@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -16,7 +16,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-
 
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
@@ -39,6 +38,7 @@ from weblate.trans.forms import (
 from weblate.trans.models import Change, Unit
 from weblate.trans.util import render
 from weblate.utils import messages
+from weblate.utils.db import get_nokey_args
 from weblate.utils.ratelimit import check_rate_limit
 from weblate.utils.views import (
     get_component,
@@ -52,7 +52,7 @@ from weblate.utils.views import (
 
 
 def parse_url(request, project, component=None, lang=None):
-    context = {}
+    context = {"components": None}
     if component is None:
         obj = get_project(request, project)
         unit_set = Unit.objects.filter(translation__component__project=obj)
@@ -62,12 +62,14 @@ def parse_url(request, project, component=None, lang=None):
         unit_set = Unit.objects.filter(translation__component=obj)
         context["component"] = obj
         context["project"] = obj.project
+        context["components"] = [obj]
     else:
         obj = get_translation(request, project, component, lang)
         unit_set = obj.unit_set.all()
         context["translation"] = obj
         context["component"] = obj.component
         context["project"] = obj.component.project
+        context["components"] = [obj.component]
 
     if not request.user.has_perm("unit.edit", obj):
         raise PermissionDenied()
@@ -119,7 +121,7 @@ def search_replace(request, project, component=None, lang=None):
         matching = confirm.cleaned_data["units"]
 
         with transaction.atomic():
-            for unit in matching.select_for_update():
+            for unit in matching.select_for_update(**get_nokey_args()):
                 if not request.user.has_perm("unit.edit", unit):
                     continue
                 unit.translate(
@@ -185,17 +187,22 @@ def search(request, project=None, component=None, lang=None):
         )
         search_form.is_valid()
         # Filter results by ACL
+        units = Unit.objects.prefetch_full().prefetch()
         if component:
-            units = Unit.objects.filter(translation__component=obj)
+            units = units.filter(translation__component=obj)
         elif project:
-            units = Unit.objects.filter(translation__component__project=obj)
+            units = units.filter(translation__component__project=obj)
         else:
-            units = Unit.objects.filter_access(request.user)
-        units = units.search(search_form.cleaned_data.get("q", "")).distinct()
+            units = units.filter_access(request.user)
+        units = units.search(
+            search_form.cleaned_data.get("q", ""), project=context.get("project")
+        ).distinct()
         if lang:
             units = units.filter(translation__language=context["language"])
 
-        units = get_paginator(request, units.order_by_request(search_form.cleaned_data))
+        units = get_paginator(
+            request, units.order_by_request(search_form.cleaned_data, obj)
+        )
         # Rebuild context from scratch here to get new form
         context = {
             "search_form": search_form,
@@ -243,6 +250,8 @@ def bulk_edit(request, project, component=None, lang=None):
         remove_flags=form.cleaned_data["remove_flags"],
         add_labels=form.cleaned_data["add_labels"],
         remove_labels=form.cleaned_data["remove_labels"],
+        project=context["project"],
+        components=context["components"],
     )
 
     import_message(

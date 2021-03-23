@@ -13,6 +13,7 @@ import weblate.utils.fields
 import weblate.utils.render
 import weblate.utils.validators
 from weblate.formats.models import FILE_FORMATS
+from weblate.utils.db import MY_DROP, MY_FTX, PG_DROP, PG_TRGM
 from weblate.utils.licenses import get_license_choices
 from weblate.vcs.models import VCS_REGISTRY
 
@@ -26,12 +27,6 @@ FIELDS = (
     ("comment", "comment"),
     ("dictionary", "source"),
 )
-
-PG_TRGM = "CREATE INDEX {0}_{1}_fulltext ON trans_{0} USING GIN ({1} gin_trgm_ops)"
-PG_DROP = "DROP INDEX {0}_{1}_fulltext"
-
-MY_FTX = "CREATE FULLTEXT INDEX {0}_{1}_fulltext ON trans_{0}({1})"
-MY_DROP = "ALTER TABLE trans_{0} DROP INDEX {0}_{1}_fulltext"
 
 
 def create_index(apps, schema_editor):
@@ -56,7 +51,7 @@ def create_index(apps, schema_editor):
             "CREATE INDEX unit_context_index ON trans_unit(context(255))"
         )
     else:
-        raise Exception("Unsupported database: {}".format(vendor))
+        raise Exception(f"Unsupported database: {vendor}")
 
 
 def drop_index(apps, schema_editor):
@@ -70,7 +65,7 @@ def drop_index(apps, schema_editor):
         schema_editor.execute("ALTER TABLE trans_unit DROP INDEX unit_source_index")
         schema_editor.execute("ALTER TABLE trans_unit DROP INDEX unit_context_index")
     else:
-        raise Exception("Unsupported database: {}".format(vendor))
+        raise Exception(f"Unsupported database: {vendor}")
 
 
 class Migration(migrations.Migration):
@@ -234,7 +229,7 @@ class Migration(migrations.Migration):
                 (
                     "source_language",
                     models.ForeignKey(
-                        default=weblate.lang.models.get_english_lang,
+                        default=weblate.lang.models.get_default_lang,
                         help_text="Language used for source strings in all components",
                         on_delete=django.db.models.deletion.CASCADE,
                         to="lang.Language",
@@ -456,7 +451,7 @@ class Migration(migrations.Migration):
                     "suggestion_voting",
                     models.BooleanField(
                         default=False,
-                        help_text="Whether users can vote for suggestions.",
+                        help_text="Users can only vote for suggestions and can’t make direct translations.",
                         verbose_name="Suggestion voting",
                     ),
                 ),
@@ -578,7 +573,7 @@ class Migration(migrations.Migration):
                     "language_regex",
                     weblate.trans.fields.RegexField(
                         default="^[^.]+$",
-                        help_text="Regular expression used to filter translation when scanning for filemask.",
+                        help_text="Regular expression used to filter translation files when scanning for filemask.",
                         max_length=500,
                         verbose_name="Language filter",
                     ),

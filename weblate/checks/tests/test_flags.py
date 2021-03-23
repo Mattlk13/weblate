@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -162,4 +162,15 @@ class FlagTest(SimpleTestCase):
     def test_empty_params(self):
         self.test_replacements(
             "replacements:{COLOR-GREY}::{COLOR-GARNET}::{VARIABLE-01}:99"
+        )
+
+    def test_escaped_values(self):
+        flags = Flags(r"""placeholders:"\\":"\"" """)
+        self.assertEqual(flags.get_value("placeholders"), ["\\", '"'])
+
+    def test_set(self):
+        flags = Flags()
+        flags.set_value("variant", "Long string with \"quotes\" and 'quotes'.")
+        self.assertEqual(
+            flags.format(), r'''variant:"Long string with \"quotes\" and 'quotes'."'''
         )

@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -17,13 +17,12 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-
 import math
 import os
 import time
+import warnings
 from contextlib import contextmanager
 from datetime import timedelta
-from io import BytesIO
 from unittest import SkipTest
 
 import social_django.utils
@@ -31,7 +30,6 @@ from django.conf import settings
 from django.core import mail
 from django.test.utils import modify_settings, override_settings
 from django.urls import reverse
-from PIL import Image
 from selenium import webdriver
 from selenium.common.exceptions import ElementNotVisibleException, WebDriverException
 from selenium.webdriver.chrome.options import Options
@@ -45,7 +43,6 @@ from selenium.webdriver.support.ui import Select, WebDriverWait
 
 import weblate.screenshots.views
 from weblate.fonts.tests.utils import FONT
-from weblate.glossary.models import Glossary, Term
 from weblate.lang.models import Language
 from weblate.trans.models import Change, Component, Project, Unit
 from weblate.trans.tests.test_models import BaseLiveServerTestCase
@@ -56,7 +53,9 @@ from weblate.trans.tests.utils import (
     create_test_user,
     get_test_file,
 )
+from weblate.utils.db import using_postgresql
 from weblate.vcs.ssh import get_key_data
+from weblate.wladmin.models import ConfigurationError, SupportStatus
 
 TEST_BACKENDS = (
     "social_core.backends.email.EmailAuth",
@@ -92,7 +91,7 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
         # well inside a transaction, so we avoid using transactions for
         # tests. Otherwise we end up with no matches for the query.
         # See https://dev.mysql.com/doc/refman/5.6/en/innodb-fulltext-index.html
-        if settings.DATABASES["default"]["ENGINE"] == "django.db.backends.mysql":
+        if not using_postgresql():
             return False
         return super()._databases_support_transactions()
 
@@ -116,6 +115,7 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
         # https://stackoverflow.com/a/50642913/225718
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
 
         # Force Chrome in English
         options.add_argument("--lang=en")
@@ -150,13 +150,13 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
 
     def setUp(self):
         if self.driver is None:
-            print("Selenium error: {}".format(self.driver_error))
-            raise SkipTest("Webdriver not available: {}".format(self.driver_error))
+            warnings.warn(f"Selenium error: {self.driver_error}")
+            raise SkipTest(f"Webdriver not available: {self.driver_error}")
         super().setUp()
-        self.driver.get("{0}{1}".format(self.live_server_url, reverse("home")))
+        self.driver.get("{}{}".format(self.live_server_url, reverse("home")))
         self.driver.set_window_size(1200, 1024)
         self.site_domain = settings.SITE_DOMAIN
-        settings.SITE_DOMAIN = "{}:{}".format(self.host, self.server_thread.port)
+        settings.SITE_DOMAIN = f"{self.host}:{self.server_thread.port}"
 
     def tearDown(self):
         super().tearDown()
@@ -172,46 +172,18 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
     def scroll_top(self):
         self.driver.execute_script("window.scrollTo(0, 0)")
 
-    def screenshot(self, name, scroll=True):
+    def screenshot(self, name: str):
         """Captures named full page screenshot."""
         self.scroll_top()
         # Get window and document dimensions
-        window_height = self.driver.execute_script("return window.innerHeight")
         scroll_height = self.driver.execute_script("return document.body.scrollHeight")
         scroll_width = self.driver.execute_script("return document.body.scrollWidth")
-        # Calculate number of screnshots
-        num = int(math.ceil(float(scroll_height) / float(window_height)))
-
-        # Capture screenshots
-        screenshots = []
-        for i in range(num):
-            if i > 0:
-                self.driver.execute_script(
-                    "window.scrollBy(%d,%d)" % (0, window_height)
-                )
-            screenshots.append(Image.open(BytesIO(self.driver.get_screenshot_as_png())))
-            if not scroll:
-                scroll_height = window_height
-                break
-
-        # Create final image
-        stitched = Image.new("RGB", (scroll_width, scroll_height))
-
-        # Stitch images together
-        for i, img in enumerate(screenshots):
-            offset = i * window_height
-
-            # Remove overlapping area from last screenshot
-            if i > 0 and i == num - 1:
-                overlap_height = img.height - scroll_height % img.height
-            else:
-                overlap_height = 0
-
-            stitched.paste(img, (0, offset - overlap_height))
-
-        stitched.save(os.path.join(self.image_path, name))
-
-        self.scroll_top()
+        # Resize the window
+        self.driver.set_window_size(scroll_width, scroll_height + 20)
+        time.sleep(1)
+        # Get screenshot
+        with open(os.path.join(self.image_path, name), "wb") as handle:
+            handle.write(self.driver.get_screenshot_as_png())
 
     def click(self, element="", htmlid=None):
         """Wrapper to scroll into element for click."""
@@ -225,6 +197,12 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
         except ElementNotVisibleException:
             self.actions.move_to_element(element).perform()
             element.click()
+
+    def upload_file(self, element, filename):
+        filename = os.path.abspath(filename)
+        if not os.path.exists(filename):
+            raise Exception(f"Test file not found: {filename}")
+        element.send_keys(filename)
 
     def clear_field(self, element):
         element.send_keys(Keys.CONTROL + "a")
@@ -347,7 +325,7 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
             except WebDriverException as error:
                 # This usually happens when browser fails to delete some
                 # of the cookies for whatever reason.
-                print("Ignoring: {0}".format(error))
+                warnings.warn(f"Ignoring: {error}")
 
         # Confirm account
         self.driver.get(url)
@@ -425,6 +403,22 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
         )
         return project
 
+    def create_glossary(self, project, language):
+        glossary = project.glossaries[0].translation_set.get(language=language)
+        glossary.add_unit(
+            None,
+            "",
+            "machine translation",
+            "strojový překlad",
+        )
+        glossary.add_unit(
+            None,
+            "",
+            "project",
+            "projekt",
+        )
+        return glossary
+
     def view_site(self):
         with self.wait_for_page_load():
             self.click(htmlid="return-to-weblate")
@@ -473,7 +467,7 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
             "machine translation engines to get the best possible "
             "translations and applies them in this project."
         )
-        self.create_component()
+        project = self.create_component()
         language = Language.objects.get(code="cs")
 
         source = Unit.objects.get(
@@ -481,29 +475,13 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
         ).source_unit
         source.explanation = "Help text for automatic translation tool"
         source.save()
-        glossary = Glossary.objects.get()
-        Term.objects.create(
-            user=None,
-            glossary=glossary,
-            language=language,
-            source="machine translation",
-            target="strojový překlad",
-        )
-        Term.objects.create(
-            user=None,
-            glossary=glossary,
-            language=language,
-            source="project",
-            target="projekt",
-        )
+        self.create_glossary(project, language)
         source.translation.component.alert_set.all().delete()
 
         def capture_unit(name, tab):
             unit = Unit.objects.get(source=text, translation__language=language)
             with self.wait_for_page_load():
-                self.driver.get(
-                    "{0}{1}".format(self.live_server_url, unit.get_absolute_url())
-                )
+                self.driver.get(f"{self.live_server_url}{unit.get_absolute_url()}")
             self.click(htmlid=tab)
             self.screenshot(name)
             with self.wait_for_page_load():
@@ -532,9 +510,7 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
         # Upload screenshot
         self.driver.find_element(By.ID, "id_name").send_keys("Automatic translation")
         element = self.driver.find_element(By.ID, "id_image")
-        element.send_keys(
-            element._upload(get_test_file("screenshot.png"))  # noqa: SLF001
-        )
+        self.upload_file(element, get_test_file("screenshot.png"))
         with self.wait_for_page_load():
             element.submit()
 
@@ -546,7 +522,7 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
             self.screenshot("screenshot-ocr.png")
 
         # Add string manually
-        self.driver.find_element(By.ID, "search-input").send_keys("'{}'".format(text))
+        self.driver.find_element(By.ID, "search-input").send_keys(f"'{text}'")
         self.click(htmlid="screenshots-search")
         wait_search()
         self.click(self.driver.find_element(By.CLASS_NAME, "add-string"))
@@ -556,6 +532,9 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
 
     def test_admin(self):
         """Test admin interface."""
+        ConfigurationError.objects.create(
+            name="test", message="Testing configuration error"
+        )
         self.do_login(superuser=True)
         self.screenshot("admin-wrench.png")
         self.create_component()
@@ -645,7 +624,6 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
             "1"
         )
         self.driver.find_element(By.ID, "id_web").send_keys("https://weblate.org/")
-        self.driver.find_element(By.ID, "id_mail").send_keys("weblate@lists.cihar.com")
         self.driver.find_element(By.ID, "id_instructions").send_keys(
             "https://weblate.org/contribute/"
         )
@@ -740,7 +718,7 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
         with self.wait_for_page_load():
             element.submit()
         with self.wait_for_page_load():
-            self.click("Manage users")
+            self.click("Access control")
         self.screenshot("manage-users.png")
         # Access control setings
         self.click(htmlid="projects-menu")
@@ -768,27 +746,6 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
         self.screenshot("engage.png")
         with self.wait_for_page_load():
             self.click(htmlid="engage-project")
-
-        # Glossary
-        with self.wait_for_page_load():
-            self.click("Glossaries")
-        with self.wait_for_page_load():
-            self.click(self.driver.find_element(By.PARTIAL_LINK_TEXT, "Czech"))
-        self.click("Add new word")
-        self.driver.find_element(By.ID, "id_source").send_keys("language")
-        element = self.driver.find_element(By.ID, "id_target")
-        element.send_keys("jazyk")
-        with self.wait_for_page_load():
-            element.submit()
-        self.screenshot("glossary-edit.png")
-        self.click(htmlid="projects-menu")
-        with self.wait_for_page_load():
-            self.click("WeblateOrg")
-        with self.wait_for_page_load():
-            self.click("Glossaries")
-        self.screenshot("project-glossaries.png")
-        with self.wait_for_page_load():
-            self.click("WeblateOrg")
 
         # Addons
         self.click("Components")
@@ -863,7 +820,10 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
         self.click("Files")
         self.click("Upload translation")
         self.click("Files")
-        self.screenshot("export-import.png")
+        self.screenshot("file-upload.png")
+        self.click("Customize download")
+        self.click("Files")
+        self.screenshot("file-download.png")
         self.click("Tools")
         self.click("Automatic translation")
         self.click(htmlid="id_select_auto_source_2")
@@ -920,7 +880,7 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
             self.click("Czech")
         with self.wait_for_page_load():
             self.click(self.driver.find_element(By.PARTIAL_LINK_TEXT, "All strings"))
-        self.click("Other languages")
+        self.click(self.driver.find_element(By.PARTIAL_LINK_TEXT, "Other languages"))
         self.screenshot("secondary-language.png")
 
         # RTL translation
@@ -967,7 +927,6 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
         # Add project
         self.driver.find_element(By.ID, "id_name").send_keys("WeblateOrg")
         self.driver.find_element(By.ID, "id_web").send_keys("https://weblate.org/")
-        self.driver.find_element(By.ID, "id_mail").send_keys("weblate@lists.cihar.com")
         self.driver.find_element(By.ID, "id_instructions").send_keys(
             "https://weblate.org/contribute/"
         )
@@ -1056,7 +1015,7 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
 
         # Upload font
         element = self.driver.find_element(By.ID, "id_font")
-        element.send_keys(element._upload(FONT))  # noqa: SF01,SLF001
+        self.upload_file(element, FONT)
         with self.wait_for_page_load():
             self.click(htmlid="upload_font_submit")
 
@@ -1067,7 +1026,7 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
 
         # Upload second font
         element = self.driver.find_element(By.ID, "id_font")
-        element.send_keys(element._upload(SOURCE_FONT))  # noqa: SF01,SLF001
+        self.upload_file(element, SOURCE_FONT)
         with self.wait_for_page_load():
             self.click(htmlid="upload_font_submit")
 
@@ -1125,6 +1084,10 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
             self.click(self.driver.find_element(By.CLASS_NAME, "createdbackup"))
             time.sleep(0.5)
             self.screenshot("backups.png")
+            SupportStatus.objects.create(secret="123", name="community")
+            with self.wait_for_page_load():
+                self.click("Weblate status")
+            self.screenshot("support-discovery.png")
         finally:
             self.remove_temp()
 
@@ -1200,8 +1163,30 @@ class SeleniumTests(BaseLiveServerTestCase, RegistrationTestMixin, TempDirMixin)
         # Edit context
         self.click(htmlid="edit-context")
         time.sleep(0.5)
-        self.screenshot("source-review-edit.png", scroll=False)
+        self.screenshot("source-review-edit.png")
 
         # Close modal dialog
         self.driver.find_element(By.ID, "id_extra_flags").send_keys(Keys.ESCAPE)
         time.sleep(0.5)
+
+    def test_glossary(self):
+        self.do_login()
+        project = self.create_component()
+        language = Language.objects.get(code="cs")
+        glossary = self.create_glossary(project, language)
+
+        self.driver.get(f"{self.live_server_url}{glossary.get_absolute_url()}")
+        self.screenshot("glossary-component.png")
+
+        with self.wait_for_page_load():
+            self.click("Czech")
+
+        with self.wait_for_page_load():
+            self.click("Browse")
+        self.screenshot("glossary-browse.png")
+
+        with self.wait_for_page_load():
+            self.click(self.driver.find_element(By.PARTIAL_LINK_TEXT, "projekt"))
+
+        self.click(htmlid="unit_tools_dropdown")
+        self.screenshot("glossary-tools.png")

@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -55,6 +55,7 @@ class MockComponent:
         self.source_language = MockLanguage("en")
         self.project = MockProject()
         self.name = "MockComponent"
+        self.file_format = "auto"
 
 
 class MockTranslation:
@@ -65,6 +66,10 @@ class MockTranslation:
         self.component = MockComponent()
         self.is_template = False
         self.is_source = False
+
+    @staticmethod
+    def log_debug(text, *args):
+        return text % args
 
 
 class MockUnit:
@@ -83,6 +88,7 @@ class MockUnit:
         self.state = 20
         self.note = note
         self.check_cache = {}
+        self.machinery = {"best": -1}
 
     @property
     def all_flags(self):
@@ -129,12 +135,10 @@ class CheckTestCase(SimpleTestCase):
         )
         if expected:
             self.assertTrue(
-                result, 'Check did not fire for "{0}"/"{1}" ({2})'.format(*data)
+                result, 'Check did not fire for "{}"/"{}" ({})'.format(*data)
             )
         else:
-            self.assertFalse(
-                result, 'Check did fire for "{0}"/"{1}" ({2})'.format(*data)
-            )
+            self.assertFalse(result, 'Check did fire for "{}"/"{}" ({})'.format(*data))
 
     def test_single_good_matching(self):
         self.do_test(False, self.test_good_matching)

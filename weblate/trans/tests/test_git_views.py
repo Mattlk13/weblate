@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -38,12 +38,12 @@ class GitNoChangeProjectTest(ViewTestCase):
 
     def get_test_url(self, prefix):
         return reverse(
-            "{0}_{1}".format(prefix, self.TEST_TYPE),
-            kwargs=getattr(self, "kw_{0}".format(self.TEST_TYPE)),
+            f"{prefix}_{self.TEST_TYPE}",
+            kwargs=getattr(self, f"kw_{self.TEST_TYPE}"),
         )
 
     def get_expected_redirect(self):
-        return getattr(self, "{0}_url".format(self.TEST_TYPE)) + "#repository"
+        return getattr(self, f"{self.TEST_TYPE}_url") + "#repository"
 
     def test_commit(self):
         response = self.client.post(self.get_test_url("commit"))
@@ -63,6 +63,10 @@ class GitNoChangeProjectTest(ViewTestCase):
 
     def test_cleanup(self):
         response = self.client.post(self.get_test_url("cleanup"))
+        self.assertRedirects(response, self.get_expected_redirect())
+
+    def test_file_sync(self):
+        response = self.client.post(self.get_test_url("file_sync"))
         self.assertRedirects(response, self.get_expected_redirect())
 
     def test_status(self):

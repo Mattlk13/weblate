@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -16,7 +16,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-
 
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse
@@ -37,7 +36,6 @@ from weblate.trans.forms import (
     ComponentMoveForm,
     ComponentRenameForm,
     DownloadForm,
-    NewUnitForm,
     ProjectDeleteForm,
     ProjectRenameForm,
     ReplaceForm,
@@ -45,27 +43,25 @@ from weblate.trans.forms import (
     SearchForm,
     TranslationDeleteForm,
     get_new_language_form,
+    get_new_unit_form,
     get_upload_form,
 )
-from weblate.trans.models import Change, ComponentList, Translation, Unit
+from weblate.trans.models import Change, ComponentList, Translation
 from weblate.trans.models.component import prefetch_tasks
 from weblate.trans.models.project import prefetch_project_flags
 from weblate.trans.models.translation import GhostTranslation
 from weblate.trans.util import render, sort_unicode
 from weblate.utils import messages
+from weblate.utils.ratelimit import session_ratelimit_post
 from weblate.utils.stats import GhostProjectLanguageStats, prefetch_stats
 from weblate.utils.views import (
     get_component,
+    get_paginator,
     get_project,
     get_translation,
+    optional_form,
     try_set_language,
 )
-
-
-def optional_form(form, perm_user, perm, perm_obj, **kwargs):
-    if not perm_user.has_perm(perm, perm_obj):
-        return None
-    return form(**kwargs)
 
 
 @never_cache
@@ -84,14 +80,14 @@ def list_projects(request):
     )
 
 
-def add_ghost_translations(component, user, translations, generator):
+def add_ghost_translations(component, user, translations, generator, **kwargs):
     """Adds ghost translations for user languages to the list."""
-    if component.can_add_new_language(user):
+    if component.can_add_new_language(user, fast=True):
         existing = {translation.language.code for translation in translations}
         for language in user.profile.languages.all():
             if language.code in existing:
                 continue
-            translations.append(generator(component, language))
+            translations.append(generator(component, language, **kwargs))
 
 
 def show_engage(request, project, lang=None):
@@ -138,33 +134,39 @@ def show_project(request, project):
     obj.stats.ensure_basic()
     user = request.user
 
-    last_changes = Change.objects.prefetch().order().filter(project=obj)[:10]
+    last_changes = obj.change_set.prefetch().order()[:10]
     last_announcements = (
-        Change.objects.prefetch()
-        .order()
-        .filter(project=obj, action=Change.ACTION_ANNOUNCEMENT)[:10]
+        obj.change_set.prefetch().order().filter(action=Change.ACTION_ANNOUNCEMENT)[:10]
     )
+
+    all_components = prefetch_stats(
+        obj.child_components.filter_access(user).prefetch().order()
+    )
+    all_components = get_paginator(request, all_components)
+    for component in all_components:
+        component.is_shared = None if component.project == obj else component.project
 
     language_stats = obj.stats.get_language_stats()
     # Show ghost translations for user languages
     component = None
-    for component in obj.component_set.filter_access(user).all():
-        if component.can_add_new_language(user):
+    for component in all_components:
+        if component.can_add_new_language(user, fast=True):
             break
     if component:
         add_ghost_translations(
-            component, user, language_stats, GhostProjectLanguageStats
+            component,
+            user,
+            language_stats,
+            GhostProjectLanguageStats,
+            is_shared=component.is_shared,
         )
 
     language_stats = sort_unicode(
         language_stats,
-        lambda x: "{}-{}".format(
-            user.profile.get_language_order(x.language), x.language
-        ),
+        lambda x: "{}-{}".format(user.profile.get_translation_order(x), x.language),
     )
 
-    all_components = obj.component_set.filter_access(user).prefetch().order()
-    components = prefetch_tasks(prefetch_stats(all_components))
+    components = prefetch_tasks(all_components)
 
     return render(
         request,
@@ -205,7 +207,10 @@ def show_project(request, project):
                 auto_id="id_bulk_%s",
             ),
             "components": components,
-            "licenses": obj.component_set.exclude(license="").order_by("license"),
+            "licenses": sorted(
+                (component for component in all_components if component.license),
+                key=lambda component: component.license,
+            ),
         },
     )
 
@@ -216,7 +221,7 @@ def show_component(request, project, component):
     obj.stats.ensure_basic()
     user = request.user
 
-    last_changes = Change.objects.prefetch().order().filter(component=obj)[:10]
+    last_changes = obj.change_set.prefetch().order()[:10]
 
     translations = prefetch_stats(list(obj.translation_set.prefetch()))
 
@@ -225,9 +230,7 @@ def show_component(request, project, component):
 
     translations = sort_unicode(
         translations,
-        lambda x: "{}-{}".format(
-            user.profile.get_language_order(x.language), x.language
-        ),
+        lambda x: "{}-{}".format(user.profile.get_translation_order(x), x.language),
     )
 
     return render(
@@ -285,8 +288,10 @@ def show_component(request, project, component):
 @never_cache
 def show_translation(request, project, component, lang):
     obj = get_translation(request, project, component, lang)
+    component = obj.component
+    project = component.project
     obj.stats.ensure_all()
-    last_changes = Change.objects.prefetch().order().filter(translation=obj)[:10]
+    last_changes = obj.change_set.prefetch().order()[:10]
     user = request.user
 
     # Get form
@@ -298,7 +303,7 @@ def show_translation(request, project, component, lang):
     other_translations = prefetch_stats(
         list(
             Translation.objects.prefetch()
-            .filter(component__project=obj.component.project, language=obj.language)
+            .filter(component__project=project, language=obj.language)
             .exclude(pk=obj.pk)
         )
     )
@@ -306,11 +311,11 @@ def show_translation(request, project, component, lang):
     # Include ghost translations for other components, this
     # adds quick way to create translations in other components
     existing = {translation.component.slug for translation in other_translations}
-    existing.add(obj.component.slug)
-    for test_component in obj.component.project.component_set.filter_access(
-        user
-    ).exclude(slug__in=existing):
-        if test_component.can_add_new_language(user):
+    existing.add(component.slug)
+    for test_component in project.child_components.filter_access(user).exclude(
+        slug__in=existing
+    ):
+        if test_component.can_add_new_language(user, fast=True):
             other_translations.append(GhostTranslation(test_component, obj.language))
 
     # Limit the number of other components displayed to 10, preferring untranslated ones
@@ -324,11 +329,11 @@ def show_translation(request, project, component, lang):
         {
             "allow_index": True,
             "object": obj,
-            "project": obj.component.project,
+            "project": project,
             "form": form,
             "download_form": DownloadForm(auto_id="id_dl_%s"),
             "autoform": optional_form(
-                AutoForm, user, "translation.auto", obj, obj=obj.component
+                AutoForm, user, "translation.auto", obj, obj=component
             ),
             "search_form": search_form,
             "replace_form": optional_form(ReplaceForm, user, "unit.edit", obj),
@@ -339,12 +344,10 @@ def show_translation(request, project, component, lang):
                 obj,
                 user=user,
                 obj=obj,
-                project=obj.component.project,
+                project=project,
                 auto_id="id_bulk_%s",
             ),
-            "new_unit_form": NewUnitForm(
-                user, initial={"value": Unit(translation=obj, id_hash=-1)}
-            ),
+            "new_unit_form": get_new_unit_form(obj, user),
             "announcement_form": optional_form(
                 AnnouncementForm, user, "component.edit", obj
             ),
@@ -367,7 +370,7 @@ def data_project(request, project):
         "data.html",
         {
             "object": obj,
-            "components": obj.component_set.filter_access(request.user).order(),
+            "components": obj.child_components.filter_access(request.user).order(),
             "project": obj,
         },
     )
@@ -375,6 +378,7 @@ def data_project(request, project):
 
 @never_cache
 @login_required
+@session_ratelimit_post("language")
 def new_language(request, project, component):
     obj = get_component(request, project, component)
 

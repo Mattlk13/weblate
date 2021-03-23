@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -17,7 +17,6 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-
 import locale
 import os
 import sys
@@ -28,11 +27,11 @@ from django.http import HttpResponseRedirect
 from django.shortcuts import redirect
 from django.shortcuts import render as django_render
 from django.shortcuts import resolve_url
-from django.utils.encoding import force_str
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.translation import gettext as _
 from django.utils.translation import gettext_lazy
 from lxml import etree
+from translate.misc.multistring import multistring
 from translate.storage.placeables.lisa import parse_xliff, strelem_to_xml
 
 from weblate.utils.data import data_dir
@@ -76,10 +75,16 @@ def get_string(text):
     # Check for null target (happens with XLIFF)
     if text is None:
         return ""
-    if hasattr(text, "strings"):
-        return join_plural(text.strings)
+    if isinstance(text, multistring):
+        return join_plural(get_string(str(item)) for item in text.strings)
+    if isinstance(text, str):
+        # Remove possible surrogates in the string. There doesn't seem to be
+        # a cheap way to detect this, so do the conversion in both cases. In
+        # case of failure, this at least fails when parsing the file instead
+        # being that later when inserting the data to the database.
+        return text.encode("utf-16", "surrogatepass").decode("utf-16")
     # We might get integer or float in some formats
-    return force_str(text)
+    return str(text)
 
 
 def is_repo_link(val):
@@ -172,9 +177,9 @@ def cleanup_repo_url(url, text=None):
         # The URL can not be parsed, so avoid stripping
         return text
     if parsed.username and parsed.password:
-        return text.replace("{0}:{1}@".format(parsed.username, parsed.password), "")
+        return text.replace(f"{parsed.username}:{parsed.password}@", "")
     if parsed.username:
-        return text.replace("{0}@".format(parsed.username), "")
+        return text.replace(f"{parsed.username}@", "")
     return text
 
 
@@ -243,7 +248,7 @@ def sort_choices(choices):
 
 def sort_objects(objects):
     """Sort objects alphabetically."""
-    return sort_unicode(objects, force_str)
+    return sort_unicode(objects, str)
 
 
 def redirect_next(next_url, fallback):
@@ -316,6 +321,9 @@ def get_state_css(unit):
     if unit.has_suggestion:
         flags.append("state-suggest")
 
+    if "forbidden" in unit.all_flags:
+        flags.append("state-forbidden")
+
     return flags
 
 
@@ -324,15 +332,15 @@ def check_upload_method_permissions(user, translation, method: str):
     if method == "source":
         return (
             translation.is_source
-            and not translation.filename
             and user.has_perm("upload.perform", translation)
+            and hasattr(translation.component.file_format_cls, "update_bilingual")
         )
+    if method == "add":
+        return user.has_perm("unit.add", translation)
     if method in ("translate", "fuzzy"):
         return user.has_perm("unit.edit", translation)
     if method == "suggest":
-        return not translation.is_readonly and user.has_perm(
-            "suggestion.add", translation
-        )
+        return user.has_perm("suggestion.add", translation)
     if method == "approve":
         return user.has_perm("unit.review", translation)
     if method == "replace":

@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -18,21 +18,22 @@
 #
 
 import os.path
-from typing import Tuple
+from typing import Optional, Tuple
 
+from celery.result import AsyncResult
 from django.conf import settings
 from django.contrib.messages import get_messages
+from django.core.cache import cache
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.db.models import Q
 from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404
-from django.utils.encoding import smart_str
 from django.utils.safestring import mark_safe
 from django_filters import rest_framework as filters
 from rest_framework import parsers, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ParseError, ValidationError
+from rest_framework.exceptions import ParseError
 from rest_framework.mixins import CreateModelMixin, DestroyModelMixin, UpdateModelMixin
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -41,16 +42,19 @@ from rest_framework.settings import api_settings
 from rest_framework.status import HTTP_200_OK, HTTP_201_CREATED, HTTP_204_NO_CONTENT
 from rest_framework.utils import formatting
 from rest_framework.views import APIView
+from rest_framework.viewsets import ViewSet
 
 from weblate.accounts.models import Subscription
 from weblate.accounts.utils import remove_user
+from weblate.addons.models import Addon
 from weblate.api.serializers import (
+    AddonSerializer,
     BasicUserSerializer,
+    BilingualUnitSerializer,
     ChangeSerializer,
     ComponentListSerializer,
     ComponentSerializer,
     FullUserSerializer,
-    GlossarySerializer,
     GroupSerializer,
     LanguageSerializer,
     LockRequestSerializer,
@@ -58,15 +62,12 @@ from weblate.api.serializers import (
     MonolingualUnitSerializer,
     NotificationSerializer,
     ProjectSerializer,
-    ReadonlySourceUnitWriteSerializer,
     RepoRequestSerializer,
     RoleSerializer,
     ScreenshotCreateSerializer,
     ScreenshotFileSerializer,
     ScreenshotSerializer,
-    SourceUnitWriteSerializer,
     StatisticsSerializer,
-    TermSerializer,
     TranslationSerializer,
     UnitSerializer,
     UnitWriteSerializer,
@@ -76,7 +77,6 @@ from weblate.api.serializers import (
 from weblate.auth.models import Group, Role, User
 from weblate.checks.models import Check
 from weblate.formats.models import EXPORTERS
-from weblate.glossary.models import Glossary, Term
 from weblate.lang.models import Language
 from weblate.screenshots.models import Screenshot
 from weblate.trans.forms import AutoForm
@@ -91,7 +91,7 @@ from weblate.trans.models import (
 )
 from weblate.trans.stats import get_project_stats
 from weblate.trans.tasks import auto_translate, component_removal, project_removal
-from weblate.utils.celery import get_queue_stats
+from weblate.utils.celery import get_queue_stats, get_task_progress, is_task_ready
 from weblate.utils.docs import get_doc_url
 from weblate.utils.errors import report_error
 from weblate.utils.state import (
@@ -110,6 +110,7 @@ REPO_OPERATIONS = {
     "reset": ("vcs.reset", "do_reset", (), True),
     "cleanup": ("vcs.reset", "do_cleanup", (), True),
     "commit": ("vcs.commit", "commit_pending", ("api",), False),
+    "file-sync": ("vcs.reset", "do_file_sync", (), True),
 }
 
 DOC_TEXT = """
@@ -118,21 +119,23 @@ description of the API.</p>
 """
 
 
-def get_view_description(view_cls, html=False):
+def get_view_description(view, html=False):
     """Given a view class, return a textual description to represent the view.
 
     This name is used in the browsable API, and in OPTIONS responses. This function is
     the default for the `VIEW_DESCRIPTION_FUNCTION` setting.
     """
-    description = view_cls.__doc__ or ""
-    description = formatting.dedent(smart_str(description))
+    description = view.__doc__ or ""
+    description = formatting.dedent(description)
 
-    if hasattr(getattr(view_cls, "serializer_class", "None"), "Meta"):
+    if hasattr(getattr(view, "serializer_class", "None"), "Meta"):
         doc_url = get_doc_url(
-            "api", "{0}s".format(view_cls.serializer_class.Meta.model.__name__.lower())
+            "api",
+            f"{view.serializer_class.Meta.model.__name__.lower()}s",
+            user=view.request.user,
         )
     else:
-        doc_url = get_doc_url("api")
+        doc_url = get_doc_url("api", user=view.request.user)
 
     if html:
         return formatting.markup_description(description) + mark_safe(
@@ -183,7 +186,7 @@ class DownloadViewSet(viewsets.ReadOnlyModelViewSet):
             with open(filename, "rb") as handle:
                 response = HttpResponse(handle.read(), content_type=content_type)
             filename = os.path.basename(filename)
-        response["Content-Disposition"] = 'attachment; filename="{0}"'.format(filename)
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
         return response
 
 
@@ -270,8 +273,8 @@ class WeblateViewSet(DownloadViewSet):
 
             data["remote_commit"] = component.get_last_remote_commit()
             data["status"] = component.repository.status()
-            changes = Change.objects.filter(
-                action__in=Change.ACTIONS_REPOSITORY, component=component
+            changes = component.change_set.filter(
+                action__in=Change.ACTIONS_REPOSITORY
             ).order_by("-id")
 
             if changes.exists() and changes[0].is_merge_failure():
@@ -745,141 +748,6 @@ class ProjectViewSet(
         return Response(status=HTTP_204_NO_CONTENT)
 
 
-class GlossaryViewSet(WeblateViewSet, UpdateModelMixin, DestroyModelMixin):
-    """Translation projects API."""
-
-    queryset = Glossary.objects.none()
-    serializer_class = GlossarySerializer
-    lookup_field = "id"
-
-    def get_queryset(self):
-        return (
-            Glossary.objects.filter_access(self.request.user)
-            .prefetch_related("source_language", "project")
-            .order_by("id")
-        )
-
-    def perm_check(self, request):
-        obj = self.get_object()
-        project = obj.project
-        additional_projects = obj.links.all()
-        if not request.user.has_perm("project.edit", project) and not any(
-            request.user.has_perm("project.edit", proj) for proj in additional_projects
-        ):
-            self.permission_denied(request, message="Can not manage glossary")
-
-    def term_perm_check(self, request, permission, obj):
-        project = obj.project
-        additional_projects = obj.links.all()
-        if not request.user.has_perm(permission, project) and not any(
-            request.user.has_perm(permission, proj) for proj in additional_projects
-        ):
-            self.permission_denied(request, message="Can not manage glossary terms")
-
-    def update(self, request, *args, **kwargs):
-        self.perm_check(request)
-        return super().update(request, *args, **kwargs)
-
-    def destroy(self, request, *args, **kwargs):
-        self.perm_check(request)
-        return super().destroy(request, *args, **kwargs)
-
-    @action(detail=True, methods=["get", "post"])
-    def projects(self, request, **kwargs):
-        obj = self.get_object()
-        if request.method == "POST":
-            self.perm_check(request)
-            if "project_slug" not in request.data:
-                raise ParseError("Missing 'project_slug' parameter")
-
-            project_slug = request.data["project_slug"]
-
-            try:
-                project = Project.objects.get(slug=project_slug)
-            except Project.DoesNotExist:
-                raise Http404("No project slug '%s' found!" % project_slug)
-
-            obj.links.add(project)
-            serializer = self.serializer_class(obj, context={"request": request})
-
-            return Response(data={"data": serializer.data}, status=HTTP_201_CREATED)
-
-        queryset = obj.links.order_by("id")
-        page = self.paginate_queryset(queryset)
-
-        serializer = ProjectSerializer(page, many=True, context={"request": request})
-
-        return self.get_paginated_response(serializer.data)
-
-    @action(
-        detail=True, methods=["delete"], url_path="projects/(?P<project_slug>[^/.]+)"
-    )
-    def delete_projects(self, request, id, project_slug):
-        obj = self.get_object()
-        self.perm_check(request)
-
-        try:
-            project = obj.links.get(slug=project_slug)
-        except Project.DoesNotExist:
-            raise Http404("Project not found")
-        obj.links.remove(project)
-        return Response(status=HTTP_204_NO_CONTENT)
-
-    @action(detail=True, methods=["get", "post"], serializer_class=TermSerializer)
-    def terms(self, request, **kwargs):
-        obj = self.get_object()
-        if request.method == "POST":
-            self.term_perm_check(request, "glossary.add", obj)
-            with transaction.atomic():
-                serializer = TermSerializer(
-                    data=request.data, context={"request": request}
-                )
-                serializer.is_valid(raise_exception=True)
-                serializer.save(glossary=obj, user=request.user)
-                return Response(serializer.data, status=HTTP_201_CREATED)
-
-        queryset = obj.term_set.order_by("id")
-        page = self.paginate_queryset(queryset)
-
-        serializer = TermSerializer(page, many=True, context={"request": request})
-
-        return self.get_paginated_response(serializer.data)
-
-    @action(
-        detail=True,
-        methods=["get", "put", "patch", "delete"],
-        url_path="terms/(?P<term_id>[0-9]+)",
-        serializer_class=TermSerializer,
-    )
-    def terms_details(self, request, id, term_id):
-        obj = self.get_object()
-
-        try:
-            term = obj.term_set.get(id=term_id)
-        except Term.DoesNotExist:
-            raise Http404("Term not found")
-
-        if request.method == "DELETE":
-            self.term_perm_check(request, "glossary.delete", obj)
-            term.delete()
-            return Response(status=HTTP_204_NO_CONTENT)
-
-        if request.method == "GET":
-            serializer = TermSerializer(term, context={"request": request})
-        else:
-            self.term_perm_check(request, "glossary.edit", obj)
-            serializer = TermSerializer(
-                term,
-                data=request.data,
-                context={"request": request},
-                partial=request.method == "PATCH",
-            )
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-
-        return Response(serializer.data, status=HTTP_200_OK)
-
-
 class ComponentViewSet(
     MultipleFieldMixin, WeblateViewSet, UpdateModelMixin, DestroyModelMixin
 ):
@@ -975,6 +843,20 @@ class ComponentViewSet(
 
         return self.get_paginated_response(serializer.data)
 
+    @action(detail=True, methods=["post"])
+    def addons(self, request, **kwargs):
+        obj = self.get_object()
+
+        if not request.user.has_perm("component.edit", obj):
+            self.permission_denied(request, "Can not create addon")
+
+        serializer = AddonSerializer(
+            data=request.data, context={"request": request, "component": obj}
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save(component=obj)
+        return Response(serializer.data, status=HTTP_201_CREATED)
+
     @action(detail=True, methods=["get"])
     def statistics(self, request, **kwargs):
         obj = self.get_object()
@@ -1024,6 +906,49 @@ class ComponentViewSet(
         component_removal.delay(instance.pk, request.user.pk)
         return Response(status=HTTP_204_NO_CONTENT)
 
+    @action(detail=True, methods=["get", "post"])
+    def links(self, request, **kwargs):
+        instance = self.get_object()
+        if request.method == "POST":
+            if not request.user.has_perm("component.edit", instance):
+                self.permission_denied(request, "Can not edit component")
+            if "project_slug" not in request.data:
+                raise ParseError("Missing 'project_slug' parameter")
+
+            project_slug = request.data["project_slug"]
+
+            try:
+                project = request.user.allowed_projects.exclude(
+                    pk=instance.project_id
+                ).get(slug=project_slug)
+            except Project.DoesNotExist:
+                raise ParseError(f"No project slug '{project_slug}' found!")
+
+            instance.links.add(project)
+            serializer = self.serializer_class(instance, context={"request": request})
+
+            return Response(data={"data": serializer.data}, status=HTTP_201_CREATED)
+
+        queryset = instance.links.order_by("id")
+        page = self.paginate_queryset(queryset)
+
+        serializer = ProjectSerializer(page, many=True, context={"request": request})
+
+        return self.get_paginated_response(serializer.data)
+
+    @action(detail=True, methods=["delete"], url_path="links/(?P<project_slug>[^/.]+)")
+    def delete_links(self, request, project__slug, slug, project_slug):
+        instance = self.get_object()
+        if not request.user.has_perm("component.edit", instance):
+            self.permission_denied(request, "Can not edit component")
+
+        try:
+            project = instance.links.get(slug=project_slug)
+        except Project.DoesNotExist:
+            raise Http404("Project not found")
+        instance.links.remove(project)
+        return Response(status=HTTP_204_NO_CONTENT)
+
 
 class TranslationViewSet(MultipleFieldMixin, WeblateViewSet, DestroyModelMixin):
     """Translation components API."""
@@ -1056,13 +981,10 @@ class TranslationViewSet(MultipleFieldMixin, WeblateViewSet, DestroyModelMixin):
         user = request.user
         if request.method == "GET":
             fmt = self.format_kwarg or request.query_params.get("format")
-            return download_translation_file(obj, fmt)
+            return download_translation_file(request, obj, fmt)
 
         if not user.has_perm("upload.perform", obj):
             raise PermissionDenied()
-
-        if "file" not in request.data:
-            raise ParseError("Missing file parameter")
 
         serializer = UploadRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -1126,25 +1048,26 @@ class TranslationViewSet(MultipleFieldMixin, WeblateViewSet, DestroyModelMixin):
     def units(self, request, **kwargs):
         obj = self.get_object()
 
+        if obj.component.template:
+            serializer_class = MonolingualUnitSerializer
+        else:
+            serializer_class = BilingualUnitSerializer
+
         if request.method == "POST":
             if not request.user.has_perm("unit.add", obj):
                 self.permission_denied(request, "Can not add unit")
-            serializer = MonolingualUnitSerializer(data=request.data)
+            serializer = serializer_class(
+                data=request.data, context={"translation": obj}
+            )
             serializer.is_valid(raise_exception=True)
 
-            key = serializer.validated_data["key"]
-            value = serializer.validated_data["value"]
-
-            if obj.unit_set.filter(context=key).exists():
-                raise ValidationError(
-                    "Translation with this key seem to already exist!"
-                )
-
-            obj.new_unit(request, key, value)
+            obj.add_unit(request, **serializer.as_kwargs())
             serializer = self.serializer_class(obj, context={"request": request})
             return Response(serializer.data, status=HTTP_200_OK)
 
-        queryset = obj.unit_set.search(request.GET.get("q", "")).order_by("id")
+        queryset = (
+            obj.unit_set.search(request.GET.get("q", "")).order_by("id").prefetch()
+        )
         page = self.paginate_queryset(queryset)
 
         serializer = UnitSerializer(page, many=True, context={"request": request})
@@ -1228,11 +1151,6 @@ class UnitViewSet(viewsets.ReadOnlyModelViewSet, UpdateModelMixin, DestroyModelM
         # Get correct serializer based on action and instance
         if self.action in ("list", "retrieve"):
             serializer_class = UnitSerializer
-        elif isinstance(instance, Unit) and instance.is_source:
-            if instance.readonly:
-                serializer_class = ReadonlySourceUnitWriteSerializer
-            else:
-                serializer_class = SourceUnitWriteSerializer
         else:
             serializer_class = UnitWriteSerializer
         kwargs["context"] = self.get_serializer_context()
@@ -1253,10 +1171,14 @@ class UnitViewSet(viewsets.ReadOnlyModelViewSet, UpdateModelMixin, DestroyModelM
         new_state = data.get("state", None)
 
         # Sanity and permission checks
-        if do_source and not user.has_perm("source.edit", translation):
+        if do_source and (
+            not unit.is_source or not user.has_perm("source.edit", translation)
+        ):
             raise PermissionDenied()
 
         if do_translate:
+            if unit.readonly:
+                raise PermissionDenied()
             if not new_target or new_state is None:
                 raise ParseError(
                     "Please provide both state and target for a partial update"
@@ -1380,7 +1302,7 @@ class ScreenshotViewSet(DownloadViewSet, viewsets.ModelViewSet):
         required_params = ["project_slug", "component_slug", "language_code"]
         for param in required_params:
             if param not in request.data:
-                raise ParseError("Missing {param} parameter".format(param=param))
+                raise ParseError(f"Missing {param} parameter")
 
         try:
             translation = Translation.objects.get(
@@ -1399,7 +1321,12 @@ class ScreenshotViewSet(DownloadViewSet, viewsets.ModelViewSet):
                 data=request.data, context={"request": request}
             )
             serializer.is_valid(raise_exception=True)
-            serializer.save(translation=translation, user=request.user)
+            instance = serializer.save(translation=translation, user=request.user)
+            instance.change_set.create(
+                action=Change.ACTION_SCREENSHOT_ADDED,
+                user=request.user,
+                target=instance.name,
+            )
             return Response(serializer.data, status=HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
@@ -1525,7 +1452,7 @@ class Metrics(APIView):
                 "units": stats.all,
                 "units_translated": stats.translated,
                 "users": User.objects.count(),
-                "changes": Change.objects.count(),
+                "changes": stats.total_changes,
                 "projects": Project.objects.count(),
                 "components": Component.objects.count(),
                 "translations": Translation.objects.count(),
@@ -1539,3 +1466,73 @@ class Metrics(APIView):
                 "name": settings.SITE_TITLE,
             }
         )
+
+
+class TasksViewSet(ViewSet):
+    def get_task(self, request, pk, permission: Optional[str] = None) -> AsyncResult:
+        task = AsyncResult(str(pk))
+        result = task.result
+        if task.state == "PENDING" or isinstance(result, Exception):
+            component = None
+        else:
+            if result is None:
+                raise Http404("Task not found")
+
+            # Extract related object for permission check
+            if "translation" in result:
+                obj = get_object_or_404(Translation, pk=result["translation"])
+                component = obj.component
+            elif "component" in result:
+                component = obj = get_object_or_404(Component, pk=result["component"])
+            else:
+                raise Http404("Invalid task")
+
+            # Check access or permission
+            if permission:
+                if not request.user.has_perm(permission, obj):
+                    raise PermissionDenied()
+            elif not request.user.can_access_component(component):
+                raise PermissionDenied()
+
+        return task, component
+
+    def retrieve(self, request, pk=None):
+        task, _component = self.get_task(request, pk)
+        result = task.result
+        return Response(
+            {
+                "completed": is_task_ready(task),
+                "progress": get_task_progress(task),
+                "result": str(result) if isinstance(result, Exception) else result,
+                "log": "\n".join(cache.get(f"task-log-{task.id}", [])),
+            }
+        )
+
+    def destroy(self, request, pk=None):
+        task, component = self.get_task(request, pk, "component.edit")
+        if not is_task_ready(task) and component is not None:
+            task.revoke(terminate=True)
+            # Unlink task from component
+            if component.background_task_id == pk:
+                component.delete_background_task()
+        return Response(status=HTTP_204_NO_CONTENT)
+
+
+class AddonViewSet(viewsets.ReadOnlyModelViewSet, UpdateModelMixin, DestroyModelMixin):
+
+    queryset = Addon.objects.all()
+    serializer_class = AddonSerializer
+
+    def perm_check(self, request, instance: Addon):
+        if not request.user.has_perm("component.edit", instance.component):
+            self.permission_denied(request, "Can not manage addons")
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self.perm_check(request, instance)
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self.perm_check(request, instance)
+        return super().destroy(request, *args, **kwargs)

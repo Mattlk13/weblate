@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -52,6 +52,8 @@ PLAIN_FLAGS["auto-java-messageformat"] = gettext_lazy(
 )
 PLAIN_FLAGS["read-only"] = gettext_lazy("Read only")
 PLAIN_FLAGS["strict-same"] = gettext_lazy("Strict unchanged check")
+PLAIN_FLAGS["forbidden"] = gettext_lazy("Forbidden translation")
+PLAIN_FLAGS["terminology"] = gettext_lazy("Terminology")
 
 TYPED_FLAGS["font-family"] = gettext_lazy("Font family")
 TYPED_FLAGS_ARGS["font-family"] = single_value_flag(str)
@@ -67,6 +69,8 @@ TYPED_FLAGS["max-length"] = gettext_lazy("Maximum length of translation")
 TYPED_FLAGS_ARGS["max-length"] = single_value_flag(int)
 TYPED_FLAGS["replacements"] = gettext_lazy("Replacements while rendering")
 TYPED_FLAGS_ARGS["replacements"] = multi_value_flag(str, modulo=2)
+TYPED_FLAGS["variant"] = gettext_lazy("String variant")
+TYPED_FLAGS_ARGS["variant"] = single_value_flag(str)
 
 IGNORE_CHECK_FLAGS = {CHECKS[x].ignore_string for x in CHECKS}
 
@@ -161,7 +165,7 @@ class Flags:
                 yield tuple(value)
                 state = 0
             else:
-                raise ValueError("Unexpected token: {}, state={}".format(token, state))
+                raise ValueError(f"Unexpected token: {token}, state={state}")
 
         # With state 0 there was nothing parsed yet
         if state > 0:
@@ -216,7 +220,10 @@ class Flags:
 
     @staticmethod
     def format_value(value):
-        if any(c in value for c in SYNTAXCHARS):
+        # Regexp objects
+        if hasattr(value, "pattern"):
+            value = value.pattern
+        if " " in value or any(c in value for c in SYNTAXCHARS):
             return '"{}"'.format(value.replace('"', r"\""))
         return value
 
@@ -255,3 +262,7 @@ class Flags:
                 raise ValidationError(
                     _('Missing parameters for translation flag: "%s"') % name
                 )
+
+    def set_value(self, name, value):
+        self._values[name] = value
+        self._items[name] = (name, value)

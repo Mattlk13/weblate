@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -120,6 +120,11 @@ class EndStopCheckTest(CheckTestCase):
         self.do_test(False, ("Text:", "Text`", ""), "hy")
         self.do_test(False, ("Text:", "Text՝", ""), "hy")
         self.do_test(True, ("Text.", "Text", ""), "hy")
+
+    def test_santali(self):
+        self.do_test(False, ("Text.", "Text.", ""), "sat")
+        self.do_test(False, ("Text.", "Text᱾", ""), "sat")
+        self.do_test(True, ("Text.", "Text", ""), "sat")
 
 
 class EndColonCheckTest(CheckTestCase):
@@ -301,6 +306,9 @@ class EndSemicolonCheckTest(CheckTestCase):
 
     def test_greek(self):
         self.do_test(False, ("Text?", "Texte;", ""), "el")
+
+    def test_xml(self):
+        self.do_test(False, ("Text", "Texte&amp;", ""))
 
 
 class KashidaCheckTest(CheckTestCase):

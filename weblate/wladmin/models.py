@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -17,6 +17,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
+import json
 
 import dateutil.parser
 from django.conf import settings
@@ -66,6 +67,7 @@ SUPPORT_NAMES = {
     "hosted": gettext_lazy("Hosted service"),
     "basic": gettext_lazy("Basic self-hosted support"),
     "extended": gettext_lazy("Extended self-hosted support"),
+    "premium": gettext_lazy("Premium self-hosted support"),
 }
 
 
@@ -82,11 +84,12 @@ class SupportStatus(models.Model):
     secret = models.CharField(max_length=400)
     expiry = models.DateTimeField(db_index=True, null=True)
     in_limits = models.BooleanField(default=True)
+    discoverable = models.BooleanField(default=False)
 
     objects = SupportStatusManager()
 
     def __str__(self):
-        return "{}:{}".format(self.name, self.expiry)
+        return f"{self.name}:{self.expiry}"
 
     def get_verbose(self):
         return SUPPORT_NAMES.get(self.name, self.name)
@@ -102,7 +105,23 @@ class SupportStatus(models.Model):
             "components": Component.objects.count(),
             "languages": stats.languages,
             "source_strings": stats.source_strings,
+            "strings": stats.all,
+            "words": stats.all_words,
         }
+        if self.discoverable:
+            data["discoverable"] = 1
+            data["public_projects"] = json.dumps(
+                [
+                    {
+                        "name": project.name,
+                        "url": project.get_absolute_url(),
+                        "web": project.web,
+                    }
+                    for project in Project.objects.filter(
+                        access_control=Project.ACCESS_PUBLIC
+                    ).iterator()
+                ]
+            )
         ssh_key = get_key_data()
         if not ssh_key:
             generate_ssh_key(None)
@@ -179,4 +198,4 @@ class BackupLog(models.Model):
     log = models.TextField()
 
     def __str__(self):
-        return "{}:{}".format(self.service, self.event)
+        return f"{self.service}:{self.event}"

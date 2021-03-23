@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -184,7 +184,7 @@ class SameCheckTest(CheckTestCase):
                 "",
             ),
         )
-        self.do_test(True, ("File/directory", "File/directory", ""))
+        self.do_test(True, ("File/path/directory", "File/path/directory", ""))
 
     def test_same_template(self):
         self.do_test(

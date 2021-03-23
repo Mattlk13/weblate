@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -37,10 +37,10 @@ from weblate.auth.admin import RoleAdmin, WeblateGroupAdmin, WeblateUserAdmin
 from weblate.auth.models import Group, Role, User
 from weblate.checks.admin import CheckAdmin
 from weblate.checks.models import Check
+from weblate.configuration.admin import SettingAdmin
+from weblate.configuration.models import Setting
 from weblate.fonts.admin import FontAdmin, FontGroupAdmin
 from weblate.fonts.models import Font, FontGroup
-from weblate.glossary.admin import GlossaryAdmin, TermAdmin
-from weblate.glossary.models import Glossary, Term
 from weblate.lang.admin import LanguageAdmin
 from weblate.lang.models import Language
 from weblate.memory.admin import MemoryAdmin
@@ -117,7 +117,9 @@ class WeblateAdminSite(AdminSite):
         self.register(Announcement, AnnouncementAdmin)
         self.register(ComponentList, ComponentListAdmin)
         self.register(ContributorAgreement, ContributorAgreementAdmin)
-        self.register(Glossary, GlossaryAdmin)
+
+        # Settings
+        self.register(Setting, SettingAdmin)
 
         # Show some controls only in debug mode
         if settings.DEBUG:
@@ -126,7 +128,6 @@ class WeblateAdminSite(AdminSite):
             self.register(Suggestion, SuggestionAdmin)
             self.register(Comment, CommentAdmin)
             self.register(Check, CheckAdmin)
-            self.register(Term, TermAdmin)
             self.register(Change, ChangeAdmin)
 
         # Billing

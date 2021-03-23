@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -27,6 +27,7 @@ from django.forms.widgets import EmailInput
 from django.middleware.csrf import rotate_token
 from django.utils.functional import cached_property
 from django.utils.html import escape
+from django.utils.translation import gettext
 from django.utils.translation import gettext_lazy as _
 from django.utils.translation import pgettext
 
@@ -36,9 +37,10 @@ from weblate.accounts.models import AuditLog, Profile
 from weblate.accounts.notifications import (
     NOTIFICATIONS,
     SCOPE_ADMIN,
+    SCOPE_ALL,
     SCOPE_CHOICES,
-    SCOPE_DEFAULT,
     SCOPE_PROJECT,
+    SCOPE_WATCHED,
 )
 from weblate.accounts.utils import (
     adjust_session_expiry,
@@ -211,7 +213,10 @@ class SubscriptionForm(ProfileBaseForm):
 
     class Meta:
         model = Profile
-        fields = ("watched",)
+        fields = (
+            "auto_watch",
+            "watched",
+        )
         widgets = {"watched": forms.SelectMultiple}
 
     def __init__(self, *args, **kwargs):
@@ -255,13 +260,49 @@ class DashboardSettingsForm(ProfileBaseForm):
     class Meta:
         model = Profile
         fields = ("dashboard_view", "dashboard_component_list")
-        widgets = {"dashboard_view": forms.RadioSelect}
+        widgets = {
+            "dashboard_view": forms.RadioSelect,
+            "dashboard_component_list": forms.HiddenInput,
+        }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.helper = FormHelper(self)
         self.helper.disable_csrf = True
         self.helper.form_tag = False
+        component_lists = self.instance.allowed_dashboard_component_lists
+        self.fields["dashboard_component_list"].queryset = component_lists
+        choices = [
+            choice
+            for choice in self.fields["dashboard_view"].choices
+            if choice[0] != Profile.DASHBOARD_COMPONENT_LIST
+        ]
+        if not component_lists:
+            choices = [
+                choice
+                for choice in choices
+                if choice[0] != Profile.DASHBOARD_COMPONENT_LISTS
+            ]
+        for clist in component_lists:
+            choices.append((100 + clist.id, gettext("Component list: %s") % clist.name))
+        self.fields["dashboard_view"].choices = choices
+        if (
+            self.instance.dashboard_view == Profile.DASHBOARD_COMPONENT_LIST
+            and self.instance.dashboard_component_list
+        ):
+            self.initial["dashboard_view"] = (
+                100 + self.instance.dashboard_component_list_id
+            )
+
+    def clean(self):
+        view = self.cleaned_data.get("dashboard_view")
+        if view and view >= 100:
+            self.cleaned_data["dashboard_view"] = Profile.DASHBOARD_COMPONENT_LIST
+            view -= 100
+            for clist in self.instance.allowed_dashboard_component_lists:
+                if clist.id == view:
+                    self.cleaned_data["dashboard_component_list"] = clist
+                    break
 
 
 class UserForm(forms.ModelForm):
@@ -568,21 +609,6 @@ class AdminLoginForm(LoginForm):
         return data
 
 
-class HostingForm(forms.Form):
-    """Form for asking for hosting."""
-
-    message = forms.CharField(
-        label=_("Additional message"),
-        required=True,
-        widget=forms.Textarea,
-        max_length=1000,
-        help_text=_(
-            "Please describe the project and your relation to it, "
-            "preferably in English."
-        ),
-    )
-
-
 class NotificationForm(forms.Form):
     scope = forms.ChoiceField(
         choices=SCOPE_CHOICES, widget=forms.HiddenInput, required=True
@@ -638,7 +664,7 @@ class NotificationForm(forms.Form):
     @staticmethod
     def notification_fields():
         for notification_cls in NOTIFICATIONS:
-            yield ("notify-{}".format(notification_cls.get_name()), notification_cls)
+            yield (f"notify-{notification_cls.get_name()}", notification_cls)
 
     @staticmethod
     def get_initial(notification_cls, subscriptions, show_default):
@@ -661,7 +687,7 @@ class NotificationForm(forms.Form):
 
     @cached_property
     def form_scope(self):
-        return self.form_params.get("scope", SCOPE_DEFAULT)
+        return self.form_params.get("scope", SCOPE_WATCHED)
 
     @cached_property
     def form_project(self):
@@ -673,7 +699,9 @@ class NotificationForm(forms.Form):
 
     def get_name(self):
         scope = self.form_scope
-        if scope == SCOPE_DEFAULT:
+        if scope == SCOPE_ALL:
+            return _("Other projects")
+        if scope == SCOPE_WATCHED:
             return _("Watched projects")
         if scope == SCOPE_ADMIN:
             return _("Managed projects")
@@ -683,7 +711,12 @@ class NotificationForm(forms.Form):
 
     def get_help_component(self):
         scope = self.form_scope
-        if scope == SCOPE_DEFAULT:
+        if scope == SCOPE_ALL:
+            return _(
+                "You will receive a notification for every such event"
+                " in non-watched projects."
+            )
+        if scope == SCOPE_WATCHED:
             return _(
                 "You will receive a notification for every such event"
                 " in your watched projects."
@@ -703,7 +736,12 @@ class NotificationForm(forms.Form):
 
     def get_help_translation(self):
         scope = self.form_scope
-        if scope == SCOPE_DEFAULT:
+        if scope == SCOPE_ALL:
+            return _(
+                "You will only receive these notifications for your translated "
+                "languages in non-watched projects."
+            )
+        if scope == SCOPE_WATCHED:
             return _(
                 "You will only receive these notifications for your translated "
                 "languages in your watched projects."
@@ -788,6 +826,6 @@ class UserSearchForm(forms.Form):
         sort_by = self.cleaned_data.get("sort_by")
         if sort_by:
             if sort_by not in self.sort_values:
-                raise forms.ValidationError(_("Invalid ordering"))
+                raise forms.ValidationError(_("Chosen sorting is not supported."))
             return sort_by
         return None

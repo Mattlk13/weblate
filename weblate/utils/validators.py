@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -76,7 +76,7 @@ def validate_re(value, groups=None, allow_empty=True):
                 _(
                     'Regular expression is missing named group "{0}", '
                     "the simplest way to define it is {1}."
-                ).format(group, "(?P<{}>.*)".format(group))
+                ).format(group, f"(?P<{group}>.*)")
             )
 
 

@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -58,3 +58,12 @@ def error(request, message, extra_tags=""):
     """Add a message with the ``ERROR`` level."""
     if request is not None:
         add_message(get_request(request), constants.ERROR, message, extra_tags)
+
+
+def get_message_kind(tags):
+    if "error" in tags:
+        return "danger"
+    for tag in ["info", "success", "warning"]:
+        if tag in tags:
+            return tag
+    return "info"

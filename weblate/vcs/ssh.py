@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -24,7 +24,6 @@ import subprocess
 from base64 import b64decode, b64encode
 from distutils.spawn import find_executable
 
-from django.utils.encoding import force_str
 from django.utils.functional import cached_property
 from django.utils.translation import gettext as _
 
@@ -63,7 +62,7 @@ def parse_hosts_line(line):
     """Parse single hosts line into tuple host, key fingerprint."""
     host, keytype, key = line.strip().split(None, 3)[:3]
     digest = hashlib.sha256(b64decode(key)).digest()
-    fingerprint = force_str(b64encode(digest).rstrip(b"="))
+    fingerprint = b64encode(digest).rstrip(b"=").decode()
     if host.startswith("|1|"):
         # Translators: placeholder SSH hashed hostname
         host = _("[hostname hashed]")
@@ -74,12 +73,12 @@ def get_host_keys():
     """Return list of host keys."""
     try:
         result = []
-        with open(ssh_file(KNOWN_HOSTS), "r") as handle:
+        with open(ssh_file(KNOWN_HOSTS)) as handle:
             for line in handle:
                 line = line.strip()
                 if is_key_line(line):
                     result.append(parse_hosts_line(line))
-    except IOError:
+    except OSError:
         return []
 
     return result
@@ -179,7 +178,7 @@ def add_host_key(request, host, port=""):
                 messages.error(request, _("Failed to fetch public key for a host!"))
             with open(ssh_file(KNOWN_HOSTS), "a") as handle:
                 for key in keys:
-                    handle.write("{0}\n".format(key))
+                    handle.write(f"{key}\n")
         except subprocess.CalledProcessError as exc:
             messages.error(
                 request, _("Failed to get host key: %s") % exc.stderr or exc.stdout

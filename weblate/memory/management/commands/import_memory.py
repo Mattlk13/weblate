@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -50,4 +50,4 @@ class Command(BaseCommand):
         try:
             Memory.objects.import_file(None, options["file"], langmap)
         except MemoryImportError as error:
-            raise CommandError("Import failed: {}".format(error))
+            raise CommandError(f"Import failed: {error}")

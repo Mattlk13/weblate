@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -25,12 +25,12 @@ from django.http import JsonResponse
 from django.shortcuts import render
 from django.urls import reverse
 from django.utils.decorators import method_decorator
-from django.utils.encoding import force_str
 from django.utils.translation import gettext as _
 from django.views.generic.base import TemplateView
 
 from weblate.memory.forms import DeleteForm, UploadForm
 from weblate.memory.models import Memory, MemoryImportError
+from weblate.metrics.models import Metric
 from weblate.utils import messages
 from weblate.utils.views import ErrorFormView, get_project
 from weblate.wladmin.views import MENU
@@ -98,7 +98,7 @@ class UploadView(MemoryFormView):
                 self.request, _("File processed, the entries will appear shortly.")
             )
         except MemoryImportError as error:
-            messages.error(self.request, force_str(error))
+            messages.error(self.request, str(error))  # noqa: G200
         return super().form_valid(form)
 
 
@@ -123,7 +123,9 @@ class MemoryView(TemplateView):
         context["entries_origin"] = (
             entries.values("origin").order_by("origin").annotate(Count("id"))
         )
-        context["total_entries"] = Memory.objects.all().count()
+        context["total_entries"] = Metric.objects.get_current(
+            Metric.SCOPE_GLOBAL, 0, name="memory"
+        )["memory"]
         context["upload_url"] = self.get_url("memory-upload")
         context["download_url"] = self.get_url("memory-download")
         user = self.request.user

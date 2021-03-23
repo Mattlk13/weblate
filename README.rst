@@ -4,7 +4,7 @@
    :height: 80px
 
 **Weblate is a copylefted libre software web-based continuous localization system,
-used by over 1150 libre projects and companies in more than 115 countries.**
+used by over 2500 libre projects and companies in more than 165 countries.**
 
 Install it, or use the Hosted Weblate service at `weblate.org`_.
 
@@ -59,7 +59,7 @@ https://github.com/WeblateOrg/weblate/issues
 License
 -------
 
-Copyright © 2012–2020 Michal Čihař michal@cihar.com
+Copyright © 2012–2021 Michal Čihař michal@cihar.com
 
 This program is free software: you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software

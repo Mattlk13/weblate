@@ -10,7 +10,7 @@ All settings are stored in :file:`settings.py` (as is usual for Django).
     After changing any of these settings, you need to restart Weblate - both
     WSGI and Celery processes.
 
-    In case it is run as mod_wsgi, you need to restart Apache to reload the
+    In case it is run as ``mod_wsgi``, you need to restart Apache to reload the
     configuration.
 
 .. seealso::
@@ -36,7 +36,7 @@ Username of users that are not signed in.
 
 .. seealso::
 
-    :ref:`privileges`
+    :ref:`access-control`
 
 .. setting:: AUDITLOG_EXPIRY
 
@@ -167,7 +167,7 @@ Available fixes:
 ``weblate.trans.autofixes.whitespace.SameBookendingWhitespace``
     Matches whitespace at the start and end of the string to the source.
 ``weblate.trans.autofixes.chars.ReplaceTrailingDotsWithEllipsis``
-    Replaces trailing dots (...) if the source string has ellipsis (…).
+    Replaces trailing dots (...) if the source string has a corresponding ellipsis (…).
 ``weblate.trans.autofixes.chars.RemoveZeroSpace``
     Removes zero-width space characters if the source does not contain any.
 ``weblate.trans.autofixes.chars.RemoveControlChars``
@@ -180,13 +180,40 @@ You can select which ones to use:
 .. code-block:: python
 
     AUTOFIX_LIST = (
-        'weblate.trans.autofixes.whitespace.SameBookendingWhitespace',
-        'weblate.trans.autofixes.chars.ReplaceTrailingDotsWithEllipsis',
+        "weblate.trans.autofixes.whitespace.SameBookendingWhitespace",
+        "weblate.trans.autofixes.chars.ReplaceTrailingDotsWithEllipsis",
     )
 
 .. seealso::
 
    :ref:`autofix`, :ref:`custom-autofix`
+
+.. setting:: BACKGROUND_TASKS
+
+BACKGROUND_TASKS
+----------------
+
+.. versionadded:: 4.5.2
+
+Defines how often lengthy maintenance tasks should be triggered for a
+component.
+
+Right now this controls:
+
+* :ref:`addon-weblate.autotranslate.autotranslate` addon
+* :doc:`checks` recalculation
+
+Possible choices:
+
+* ``monthly`` (this is the default)
+* ``weekly``
+* ``daily``
+* ``never``
+
+.. note::
+
+   Increasing the frequency is not recommended when Weblate contains thousands
+   of components.
 
 .. setting:: BASE_DIR
 
@@ -200,6 +227,35 @@ Used to derive several other paths by default:
 
 Default value: Top level directory of Weblate sources.
 
+.. setting:: BASIC_LANGUAGES
+
+BASIC_LANGUAGES
+---------------
+
+.. versionadded:: 4.4
+
+List of languages to offer users for starting new translation. When not
+specified built in list is used which includes all commonly used languages, but
+without country specific variants.
+
+This only limits non privileged users to add unwanted languages. The project
+admins are still presented with full selection of languages defined in Weblate.
+
+.. note::
+
+   This does not define new languages for Weblate, it only filters existing ones
+   in the database.
+
+**Example:**
+
+.. code-block:: python
+
+   BASIC_LANGUAGES = {"cs", "it", "ja", "en"}
+
+.. seealso::
+
+    :ref:`languages`
+
 .. setting:: CSP_SCRIPT_SRC
 .. setting:: CSP_IMG_SRC
 .. setting:: CSP_CONNECT_SRC
@@ -211,11 +267,11 @@ CSP_SCRIPT_SRC, CSP_IMG_SRC, CSP_CONNECT_SRC, CSP_STYLE_SRC, CSP_FONT_SRC
 
 Customize ``Content-Security-Policy`` header for Weblate. The header is
 automatically generated based on enabled integrations with third-party services
-(Matomo, Google Analytics, Sentry, ...).
+(Matomo, Google Analytics, Sentry, …).
 
 All these default to empty list.
 
-** Example:: **
+**Example:**
 
 .. code-block:: python
 
@@ -256,9 +312,9 @@ You can turn on only a few:
 .. code-block:: python
 
     CHECK_LIST = (
-        'weblate.checks.chars.BeginNewlineCheck',
-        'weblate.checks.chars.EndNewlineCheck',
-        'weblate.checks.chars.MaxLengthCheck',
+        "weblate.checks.chars.BeginNewlineCheck",
+        "weblate.checks.chars.EndNewlineCheck",
+        "weblate.checks.chars.MaxLengthCheck",
     )
 
 .. note::
@@ -312,13 +368,17 @@ The following subdirectories usually exist:
 :file:`ssh`
     SSH keys and configuration.
 :file:`static`
-    Default location for static Django files, specified by ``STATIC_ROOT``.
+    Default location for static Django files, specified by :setting:`django:STATIC_ROOT`. See :ref:`static-files`.
 :file:`media`
-    Default location for Django media files, specified by ``MEDIA_ROOT``.
+    Default location for Django media files, specified by :setting:`django:MEDIA_ROOT`. Contains uploaded screenshots.
 :file:`vcs`
-    Version control repositories.
+    Version control repositories for translations.
 :file:`backups`
     Daily backup data, please check :ref:`backup-dumps` for details.
+:file:`celery`
+    Celery scheduler data, see :ref:`celery`.
+:file:`fonts`:
+    User-uploaded  fonts, see :ref:`fonts`.
 
 .. note::
 
@@ -336,6 +396,7 @@ Defaults to ``$BASE_DIR/data``.
 .. seealso::
 
     :setting:`BASE_DIR`,
+    :ref:`file-permissions`,
     :doc:`backup`
 
 .. setting:: DATABASE_BACKUP
@@ -380,8 +441,21 @@ on the internal Weblate management.
 .. seealso::
 
    :ref:`acl`,
-   :ref:`project-access_control`,
-   :ref:`privileges`
+   :ref:`project-access_control`
+
+.. setting:: DEFAULT_AUTO_WATCH
+
+DEFAULT_AUTO_WATCH
+------------------
+
+.. versionadded:: 4.5
+
+Configures whether :guilabel:`Automatically watch projects on contribution`
+should be turned on for new users. Defaults to ``True``.
+
+.. seealso::
+
+   :ref:`subscriptions`
 
 .. setting:: DEFAULT_RESTRICTED_COMPONENT
 
@@ -394,9 +468,8 @@ The default value for component restriction.
 
 .. seealso::
 
-   :ref:`acl`,
    :ref:`component-restricted`,
-   :ref:`privileges`
+   :ref:`perm-check`
 
 .. setting:: DEFAULT_COMMIT_MESSAGE
 .. setting:: DEFAULT_ADD_MESSAGE
@@ -433,23 +506,23 @@ Example:
 .. code-block:: python
 
    DEFAULT_ADDONS = {
-        # Addon with no parameters
-        "weblate.flags.target_edit": {},
-
-        # Addon with parameters
-        "weblate.autotranslate.autotranslate": {
-            "mode": "suggest",
-            "filter_type": "todo",
-            "auto_source": "mt",
-            "component": "",
-            "engines": ["weblate-translation-memory"],
-            "threshold": "80",
-        }
+       # Addon with no parameters
+       "weblate.flags.target_edit": {},
+       # Addon with parameters
+       "weblate.autotranslate.autotranslate": {
+           "mode": "suggest",
+           "filter_type": "todo",
+           "auto_source": "mt",
+           "component": "",
+           "engines": ["weblate-translation-memory"],
+           "threshold": "80",
+       },
    }
 
 .. seealso::
 
-   :djadmin:`install_addon`
+   :djadmin:`install_addon`,
+   :setting:`WEBLATE_ADDONS`
 
 .. setting:: DEFAULT_COMMITER_EMAIL
 
@@ -458,13 +531,11 @@ DEFAULT_COMMITER_EMAIL
 
 .. versionadded:: 2.4
 
-Committer e-mail address for created translation components defaulting to ``noreply@weblate.org``.
+Committer e-mail address defaulting to ``noreply@weblate.org``.
 
 .. seealso::
 
-   :setting:`DEFAULT_COMMITER_NAME`,
-   :ref:`component`,
-   :ref:`component-committer_email`
+   :setting:`DEFAULT_COMMITER_NAME`
 
 .. setting:: DEFAULT_COMMITER_NAME
 
@@ -473,13 +544,27 @@ DEFAULT_COMMITER_NAME
 
 .. versionadded:: 2.4
 
-Committer name for created translation components defaulting to ``Weblate``.
+Committer name defaulting to ``Weblate``.
 
 .. seealso::
 
-   :setting:`DEFAULT_COMMITER_EMAIL`,
-   :ref:`component`,
-   :ref:`component-committer_name`
+   :setting:`DEFAULT_COMMITER_EMAIL`
+
+.. setting:: DEFAULT_LANGUAGE
+
+DEFAULT_LANGUAGE
+----------------
+
+.. versionadded:: 4.3.2
+
+Default source language to use for example in :ref:`component-source_language`.
+
+Defaults to `en`. The matching language object needs to exist in the database.
+
+.. seealso::
+
+   :ref:`languages`,
+   :ref:`component-source_language`
 
 .. setting:: DEFAULT_MERGE_STYLE
 
@@ -497,6 +582,15 @@ Merge style for any new components.
 
    :ref:`component`,
    :ref:`component-merge_style`
+
+.. setting:: DEFAULT_SHARED_TM
+
+DEFAULT_SHARED_TM
+-----------------
+
+.. versionadded:: 3.2
+
+Configures default value of :ref:`project-use_shared_tm` and :ref:`project-contribute_shared_tm`.
 
 .. setting:: DEFAULT_TRANSLATION_PROPAGATION
 
@@ -555,16 +649,23 @@ ENABLE_HTTPS
 Whether to send links to Weblate as HTTPS or HTTP. This setting affects sent
 e-mails and generated absolute URLs.
 
-.. hint::
+In the default configuration this is also used for several Django settings
+related to HTTPS - it enables secure cookies, toggles HSTS or enables
+redirection to HTTPS URL.
 
-   In the default configuration this is also used for several Django settings
-   related to HTTPS.
+The HTTPS redirection might be problematic in some cases and you might hit
+issue with infinite redirection in case you are using a reverse proxy doing SSL
+termination which does not correctly pass protocol headers to Django. Please
+tweak your reverse proxy configuration to emit ``X-Forwarded-Proto`` or
+``Forwarded`` headers or configure :setting:`django:SECURE_PROXY_SSL_HEADER` to
+let Django correctly detect the SSL status.
 
 .. seealso::
 
     :setting:`django:SESSION_COOKIE_SECURE`,
     :setting:`django:CSRF_COOKIE_SECURE`,
     :setting:`django:SECURE_SSL_REDIRECT`,
+    :setting:`django:SECURE_PROXY_SSL_HEADER`
     :ref:`production-site`
 
 .. setting:: ENABLE_SHARING
@@ -573,6 +674,15 @@ ENABLE_SHARING
 --------------
 
 Turn on/off the :guilabel:`Share` menu so users can share translation progress on social networks.
+
+.. setting:: GET_HELP_URL
+
+GET_HELP_URL
+------------
+
+.. versionadded:: 4.5.2
+
+URL where support for your Weblate instance can be found.
 
 .. setting:: GITLAB_CREDENTIALS
 
@@ -696,9 +806,9 @@ Google Analytics ID to turn on monitoring of Weblate using Google Analytics.
 HIDE_REPO_CREDENTIALS
 ---------------------
 
-Hide repository credentials from appearing in the web interface.
-In case you have repository URL with user and password, Weblate will hide it
-when related info is shown to users.
+Hide repository credentials from the web interface. In case you have repository
+URL with user and password, Weblate will hide it when related info is shown to
+users.
 
 For example instead of ``https://user:password@git.example.com/repo.git`` it
 will show just ``https://git.example.com/repo.git``. It tries to clean up VCS
@@ -707,6 +817,24 @@ error messages too in a similar manner.
 .. note::
 
     This is turned on by default.
+
+.. setting:: HIDE_VERSION
+
+HIDE_VERSION
+------------
+
+.. versionadded:: 4.3.1
+
+Hides version information from unauthenticated users. This also makes all
+documentation links point to latest version instead of the documentation
+matching currently installed version.
+
+Hiding version is recommended security practice in some corporations, but it
+doesn't prevent attacker to figure out version by probing the behavior.
+
+.. note::
+
+    This is turned off by default.
 
 .. setting:: IP_BEHIND_REVERSE_PROXY
 
@@ -919,9 +1047,7 @@ A list of URLs you want to require logging into. (Besides the standard rules bui
 
     .. code-block:: python
 
-        LOGIN_REQUIRED_URLS = (
-            r'/(.*)$',
-        )
+        LOGIN_REQUIRED_URLS = (r"/(.*)$",)
         REST_FRAMEWORK["DEFAULT_PERMISSION_CLASSES"] = [
             "rest_framework.permissions.IsAuthenticated"
         ]
@@ -930,26 +1056,30 @@ A list of URLs you want to require logging into. (Besides the standard rules bui
 
    It is desirable to lock down API access as well, as shown in the above example.
 
+.. seealso::
+
+   :setting:`REQUIRE_LOGIN`
+
 .. setting:: LOGIN_REQUIRED_URLS_EXCEPTIONS
 
 LOGIN_REQUIRED_URLS_EXCEPTIONS
 ------------------------------
 
 List of exceptions for :setting:`LOGIN_REQUIRED_URLS`.
-If not specified, users are allowed to access the login page.
+If not specified, users are allowed to access the sign in page.
 
 Some of exceptions you might want to include:
 
 .. code-block:: python
 
     LOGIN_REQUIRED_URLS_EXCEPTIONS = (
-        r'/accounts/(.*)$', # Required for login
-        r'/static/(.*)$',   # Required for development mode
-        r'/widgets/(.*)$',  # Allowing public access to widgets
-        r'/data/(.*)$',     # Allowing public access to data exports
-        r'/hooks/(.*)$',    # Allowing public access to notification hooks
-        r'/api/(.*)$',      # Allowing access to API
-        r'/js/i18n/$',      # JavaScript localization
+        r"/accounts/(.*)$",  # Required for sign in
+        r"/static/(.*)$",  # Required for development mode
+        r"/widgets/(.*)$",  # Allowing public access to widgets
+        r"/data/(.*)$",  # Allowing public access to data exports
+        r"/hooks/(.*)$",  # Allowing public access to notification hooks
+        r"/api/(.*)$",  # Allowing access to API
+        r"/js/i18n/$",  # JavaScript localization
     )
 
 .. setting:: PIWIK_SITE_ID
@@ -1014,19 +1144,19 @@ List of enabled machine translation services to use.
 .. code-block:: python
 
     MT_SERVICES = (
-        'weblate.machinery.apertium.ApertiumAPYTranslation',
-        'weblate.machinery.deepl.DeepLTranslation',
-        'weblate.machinery.glosbe.GlosbeTranslation',
-        'weblate.machinery.google.GoogleTranslation',
-        'weblate.machinery.microsoft.MicrosoftCognitiveTranslation',
-        'weblate.machinery.microsoftterminology.MicrosoftTerminologyService',
-        'weblate.machinery.mymemory.MyMemoryTranslation',
-        'weblate.machinery.tmserver.AmagamaTranslation',
-        'weblate.machinery.tmserver.TMServerTranslation',
-        'weblate.machinery.yandex.YandexTranslation',
-        'weblate.machinery.weblatetm.WeblateTranslation',
-        'weblate.machinery.saptranslationhub.SAPTranslationHub',
-        'weblate.memory.machine.WeblateMemory',
+        "weblate.machinery.apertium.ApertiumAPYTranslation",
+        "weblate.machinery.deepl.DeepLTranslation",
+        "weblate.machinery.glosbe.GlosbeTranslation",
+        "weblate.machinery.google.GoogleTranslation",
+        "weblate.machinery.microsoft.MicrosoftCognitiveTranslation",
+        "weblate.machinery.microsoftterminology.MicrosoftTerminologyService",
+        "weblate.machinery.mymemory.MyMemoryTranslation",
+        "weblate.machinery.tmserver.AmagamaTranslation",
+        "weblate.machinery.tmserver.TMServerTranslation",
+        "weblate.machinery.yandex.YandexTranslation",
+        "weblate.machinery.weblatetm.WeblateTranslation",
+        "weblate.machinery.saptranslationhub.SAPTranslationHub",
+        "weblate.memory.machine.WeblateMemory",
     )
 
 .. seealso::
@@ -1197,7 +1327,7 @@ Client key for the Microsoft Cognitive Services Translator API.
 
 .. seealso::
     :ref:`ms-cognitive-translate`, :ref:`machine-translation-setup`, :ref:`machine-translation`,
-    `Cognitive Services - Text Translation API <https://azure.microsoft.com/services/cognitive-services/translator-text-api/>`_,
+    `Cognitive Services - Text Translation API <https://azure.microsoft.com/en-us/services/cognitive-services/translator/>`_,
     `Microsoft Azure Portal <https://portal.azure.com/>`_
 
 .. setting:: MT_MICROSOFT_REGION
@@ -1287,7 +1417,7 @@ MyMemory user ID for private translation memory, use it with :setting:`MT_MYMEMO
 MT_NETEASE_KEY
 --------------
 
-App key for NetEase Sight API, you can register at https://sight.netease.com/
+App key for NetEase Sight API, you can register at https://sight.youdao.com/
 
 .. seealso::
 
@@ -1298,7 +1428,7 @@ App key for NetEase Sight API, you can register at https://sight.netease.com/
 MT_NETEASE_SECRET
 -----------------
 
-App secret for the NetEase Sight API, you can register at https://sight.netease.com/
+App secret for the NetEase Sight API, you can register at https://sight.youdao.com/
 
 .. seealso::
 
@@ -1406,6 +1536,63 @@ NEARBY_MESSAGES
 ---------------
 
 How many strings to show around the currently translated string. This is just a default value, users can adjust this in :ref:`user-profile`.
+
+.. setting:: PAGURE_CREDENTIALS
+
+PAGURE_CREDENTIALS
+------------------
+
+.. versionadded:: 4.3.2
+
+List for credentials for Pagure servers.
+
+.. hint::
+
+    Use this in case you want Weblate to interact with more of them, for single
+    Pagure endpoint stick with :setting:`PAGURE_USERNAME` and :setting:`PAGURE_TOKEN`.
+
+.. code-block:: python
+
+    PAGURE_CREDENTIALS = {
+        "pagure.io": {
+            "username": "weblate",
+            "token": "your-api-token",
+        },
+        "pagure.example.com": {
+            "username": "weblate",
+            "token": "another-api-token",
+        },
+    }
+
+.. setting:: PAGURE_USERNAME
+
+PAGURE_USERNAME
+---------------
+
+.. versionadded:: 4.3.2
+
+Pagure username used to send merge requests for translation updates.
+
+.. seealso::
+
+   :setting:`PAGURE_CREDENTIALS`,
+   :ref:`vcs-pagure`
+
+.. setting:: PAGURE_TOKEN
+
+PAGURE_TOKEN
+------------
+
+.. versionadded:: 4.3.2
+
+Pagure personal access token used to make API calls for translation updates.
+
+.. seealso::
+
+   :setting:`PAGURE_CREDENTIALS`,
+   :ref:`vcs-pagure`,
+   `Pagure API <https://pagure.io/api/0/>`_
+
 
 .. setting:: RATELIMIT_ATTEMPTS
 
@@ -1519,7 +1706,7 @@ You can use it to restrict registration to a single e-mail domain:
 
 .. code-block:: python
 
-    REGISTRATION_EMAIL_MATCH = r'^.*@weblate\.org$'
+    REGISTRATION_EMAIL_MATCH = r"^.*@weblate\.org$"
 
 .. setting:: REGISTRATION_OPEN
 
@@ -1567,11 +1754,11 @@ REQUIRE_LOGIN
 .. versionadded:: 4.1
 
 This enables :setting:`LOGIN_REQUIRED_URLS` and configures REST framework to
-require login for all API endpoints.
+require authentication for all API endpoints.
 
 .. note::
 
-    This is in implemented in the :ref:`sample-configuration`. For Docker, use
+    This is implemented in the :ref:`sample-configuration`. For Docker, use
     :envvar:`WEBLATE_REQUIRE_LOGIN`.
 
 .. setting:: SENTRY_DSN
@@ -1670,7 +1857,7 @@ The default value is:
 
 .. code-block:: python
 
-    SPECIAL_CHARS = ('\t', '\n', '…')
+    SPECIAL_CHARS = ("\t", "\n", "…")
 
 .. setting:: SINGLE_PROJECT
 
@@ -1712,6 +1899,21 @@ SUGGESTION_CLEANUP_DAYS
 Automatically deletes suggestions after a given number of days.
 Defaults to ``None``, meaning no deletions.
 
+.. setting:: UPDATE_LANGUAGES
+
+UPDATE_LANGUAGES
+----------------
+
+.. versionadded:: 4.3.2
+
+Controls whether languages database should be updated when running database
+migration and is enabled by default. This setting has no effect on invocation
+of :djadmin:`setuplang`.
+
+.. seealso::
+
+    :ref:`included-languages`
+
 .. setting:: URL_PREFIX
 
 URL_PREFIX
@@ -1733,7 +1935,7 @@ Example:
 
 .. code-block:: python
 
-   URL_PREFIX = '/translations'
+   URL_PREFIX = "/translations"
 
 .. note::
 
@@ -1757,9 +1959,7 @@ Configuration of available VCS backends.
 
 .. code-block:: python
 
-   VCS_BACKENDS = (
-      'weblate.vcs.git.GitRepository',
-   )
+   VCS_BACKENDS = ("weblate.vcs.git.GitRepository",)
 
 .. seealso::
 
@@ -1828,14 +2028,20 @@ example:
         "weblate.addons.autotranslate.AutoTranslateAddon",
         "weblate.addons.yaml.YAMLCustomizeAddon",
         "weblate.addons.cdn.CDNJSAddon",
-
         # Addon you want to include
         "weblate.addons.example.ExampleAddon",
     )
 
+.. note::
+
+    Removing the addon from the list does not uninstall it from the components.
+    Weblate will crash in that case. Please uninstall addon from all components
+    prior to removing it from this list.
+
 .. seealso::
 
-    :ref:`addons`
+    :ref:`addons`,
+    :setting:`DEFAULT_ADDONS`
 
 .. setting:: WEBLATE_EXPORTERS
 
@@ -1879,7 +2085,7 @@ Identity used by Weblate to sign Git commits, for example:
 
 .. code-block:: python
 
-    WEBLATE_GPG_IDENTITY = 'Weblate <weblate@example.com>'
+    WEBLATE_GPG_IDENTITY = "Weblate <weblate@example.com>"
 
 The Weblate GPG keyring is searched for a matching key (:file:`home/.gnupg` under
 :setting:`DATA_DIR`). If not found, a key is generated, please check

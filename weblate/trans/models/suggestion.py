@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -121,7 +121,6 @@ class Suggestion(models.Model, UserDisplayMixin):
     )
 
     objects = SuggestionManager.from_queryset(SuggestionQuerySet)()
-    weblate_unsafe_delete = True
 
     class Meta:
         app_label = "trans"
@@ -129,7 +128,7 @@ class Suggestion(models.Model, UserDisplayMixin):
         verbose_name_plural = "string suggestions"
 
     def __str__(self):
-        return "suggestion for {0} by {1}".format(
+        return "suggestion for {} by {}".format(
             self.unit, self.user.username if self.user else "unknown"
         )
 
@@ -212,8 +211,6 @@ class Vote(models.Model):
     )
     value = models.SmallIntegerField(default=0)
 
-    weblate_unsafe_delete = True
-
     POSITIVE = 1
     NEGATIVE = -1
 
@@ -224,6 +221,4 @@ class Vote(models.Model):
         verbose_name_plural = "suggestion votes"
 
     def __str__(self):
-        return "{0:+d} for {1} by {2}".format(
-            self.value, self.suggestion, self.user.username
-        )
+        return f"{self.value:+d} for {self.suggestion} by {self.user.username}"

@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -51,7 +51,7 @@ class RawQuotedString(QuotedString):
         super().__init__(quoteChar, escChar=escChar, convertWhitespaceEscapes=False)
         # unlike the QuotedString this replaces only escaped quotes and not all chars
         self.escCharReplacePattern = (
-            re.escape(escChar) + "(" + re.escape(quoteChar) + ")"
+            re.escape(escChar) + "([" + re.escape(quoteChar) + re.escape(escChar) + "])"
         )
 
 

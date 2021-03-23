@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -22,10 +22,11 @@ from glob import glob
 from time import time
 from typing import List, Optional
 
+from celery import current_task
 from celery.schedules import crontab
 from django.conf import settings
 from django.db import transaction
-from django.db.models import F
+from django.db.models import Count, F
 from django.utils import timezone
 from django.utils.translation import gettext as _
 from django.utils.translation import ngettext, override
@@ -43,24 +44,25 @@ from weblate.trans.models import (
     Project,
     Suggestion,
     Translation,
-    Unit,
 )
 from weblate.utils.celery import app
 from weblate.utils.data import data_dir
 from weblate.utils.errors import report_error
 from weblate.utils.files import remove_tree
+from weblate.utils.stats import prefetch_stats
 from weblate.vcs.base import RepositoryException
 
 
 @app.task(
     trail=False, autoretry_for=(Timeout,), retry_backoff=600, retry_backoff_max=3600
 )
-def perform_update(cls, pk, auto=False):
+def perform_update(cls, pk, auto=False, obj=None):
     try:
-        if cls == "Project":
-            obj = Project.objects.get(pk=pk)
-        else:
-            obj = Component.objects.get(pk=pk)
+        if obj is None:
+            if cls == "Project":
+                obj = Project.objects.get(pk=pk)
+            else:
+                obj = Component.objects.get(pk=pk)
         if settings.AUTO_UPDATE in ("full", True) or not auto:
             obj.do_update()
         else:
@@ -102,6 +104,12 @@ def perform_push(pk, *args, **kwargs):
     component.do_push(*args, **kwargs)
 
 
+@app.task(trail=False)
+def update_component_stats(pk):
+    component = Component.objects.get(pk=pk)
+    component.stats.ensure_basic()
+
+
 @app.task(
     trail=False, autoretry_for=(Timeout,), retry_backoff=600, retry_backoff_max=3600
 )
@@ -111,7 +119,7 @@ def commit_pending(hours=None, pks=None, logger=None):
     else:
         components = Component.objects.filter(translation__pk__in=pks).distinct()
 
-    for component in components.prefetch():
+    for component in prefetch_stats(components.prefetch()):
         if hours is None:
             age = timezone.now() - timedelta(hours=component.commit_pending_age)
         else:
@@ -127,7 +135,7 @@ def commit_pending(hours=None, pks=None, logger=None):
             continue
 
         if logger:
-            logger("Committing {0}".format(component))
+            logger(f"Committing {component}")
 
         perform_commit.delay(component.pk, "commit_pending", None)
 
@@ -135,17 +143,15 @@ def commit_pending(hours=None, pks=None, logger=None):
 def cleanup_sources(project):
     """Remove stale source Unit objects."""
     for component in project.component_set.filter(template="").iterator():
+        translation = component.source_translation
+        # Skip translations with a filename (eg. when POT file is present)
+        if translation.filename:
+            continue
         with transaction.atomic():
-            translation = component.source_translation
-
-            source_ids = (
-                Unit.objects.filter(translation__component=component)
-                .exclude(translation=translation)
-                .values_list("id_hash", flat=True)
-                .distinct()
-            )
-
-            translation.unit_set.exclude(id_hash__in=source_ids).delete()
+            # Remove all units where there is just one referenced unit (self)
+            translation.unit_set.annotate(Count("unit")).filter(
+                unit__count__lte=1
+            ).delete()
 
 
 @app.task(trail=False)
@@ -192,13 +198,11 @@ def cleanup_suggestions():
 @app.task(trail=False)
 def update_remotes():
     """Update all remote branches (without attempt to merge)."""
-    non_linked = Component.objects.with_repo()
-
     if settings.AUTO_UPDATE not in ("full", "remote", True, False):
         return
 
-    for component in non_linked.iterator():
-        perform_update.delay("Component", component.pk, auto=True)
+    for component in Component.objects.with_repo().iterator():
+        perform_update("Component", -1, auto=True, obj=component)
 
 
 @app.task(trail=False)
@@ -266,21 +270,22 @@ def repository_alerts(threshold=settings.REPOSITORY_ALERT_THRESHOLD):
 @app.task(trail=False)
 def component_alerts(component_ids=None):
     if component_ids:
-        components = Component.objects.filter(pk__in=component_ids).iterator()
+        components = Component.objects.filter(pk__in=component_ids)
     else:
-        components = Component.objects.iterator()
-    for component in components:
+        components = Component.objects.all()
+    for component in components.prefetch():
         component.update_alerts()
 
 
 @app.task(trail=False, autoretry_for=(Component.DoesNotExist,), retry_backoff=60)
 def component_after_save(
-    pk, changed_git, changed_setup, changed_template, changed_variant, skip_push
+    pk, changed_git, changed_setup, changed_template, changed_variant, skip_push, create
 ):
     component = Component.objects.get(pk=pk)
     component.after_save(
-        changed_git, changed_setup, changed_template, changed_variant, skip_push
+        changed_git, changed_setup, changed_template, changed_variant, skip_push, create
     )
+    return {"component": pk}
 
 
 @app.task(trail=False)
@@ -297,6 +302,12 @@ def component_removal(pk, uid):
             author=user,
         )
         obj.delete()
+        if obj.allow_translation_propagation:
+            components = obj.project.component_set.filter(
+                allow_translation_propagation=True
+            ).exclude(pk=obj.pk)
+            for component_id in components.values_list("id", flat=True):
+                update_checks.delay(component_id)
     except Component.DoesNotExist:
         return
 
@@ -330,25 +341,32 @@ def auto_translate(
     else:
         user = None
     with override(user.profile.language if user else "en"):
-        auto = AutoTranslate(
-            user, Translation.objects.get(pk=translation_id), filter_type, mode
+        translation = Translation.objects.get(pk=translation_id)
+        translation.log_info(
+            "starting automatic translation %s: %s: %s",
+            current_task.request.id,
+            auto_source,
+            ", ".join(engines) if engines else component,
         )
+        auto = AutoTranslate(user, translation, filter_type, mode)
         if auto_source == "mt":
             auto.process_mt(engines, threshold)
         else:
             auto.process_others(component)
+        translation.log_info("completed automatic translation")
 
         if auto.updated == 0:
-            return _("Automatic translation completed, no strings were updated.")
-
-        return (
-            ngettext(
-                "Automatic translation completed, %d string was updated.",
-                "Automatic translation completed, %d strings were updated.",
-                auto.updated,
+            message = _("Automatic translation completed, no strings were updated.")
+        else:
+            message = (
+                ngettext(
+                    "Automatic translation completed, %d string was updated.",
+                    "Automatic translation completed, %d strings were updated.",
+                    auto.updated,
+                )
+                % auto.updated
             )
-            % auto.updated
-        )
+        return {"translation": translation_id, "message": message}
 
 
 @app.task(trail=False)
@@ -369,30 +387,37 @@ def create_component(addons_from=None, in_task=False, **kwargs):
                 continue
             addon.addon.create(component, configuration=addon.configuration)
     if in_task:
-        return None
+        return {"component": component.id}
     return component
 
 
 @app.task(trail=False)
 def update_checks(pk):
     component = Component.objects.get(pk=pk)
+    component.batch_checks = True
     for translation in component.translation_set.exclude(
         pk=component.source_translation.pk
-    ).iterator():
-        for unit in translation.unit_set.iterator():
+    ).prefetch():
+        for unit in translation.unit_set.prefetch():
             unit.run_checks()
-    for unit in component.source_translation.unit_set.iterator():
+    for unit in component.source_translation.unit_set.prefetch():
         unit.run_checks()
-    for translation in component.translation_set.iterator():
-        translation.invalidate_cache()
+    component.invalidate_cache()
+    component.run_batched_checks()
 
 
 @app.task(trail=False)
 def daily_update_checks():
-    # Update every component roughly once in a month
-    components = Component.objects.annotate(idmod=F("id") % 30).filter(
-        idmod=date.today().day
-    )
+    components = Component.objects.all()
+    today = date.today()
+    if settings.BACKGROUND_TASKS == "never":
+        return
+    if settings.BACKGROUND_TASKS == "monthly":
+        components = components.annotate(idmod=F("id") % 30).filter(idmod=today.day)
+    elif settings.BACKGROUND_TASKS == "weekly":
+        components = components.annotate(idmod=F("id") % 7).filter(
+            idmod=today.weekday()
+        )
     for component_id in components.values_list("id", flat=True):
         update_checks.delay(component_id)
 

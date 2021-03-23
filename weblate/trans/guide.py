@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -52,10 +52,10 @@ class Guideline:
     def get_url(self):
         url = reverse(self.url, kwargs=self.component.get_reverse_url_kwargs())
         if self.anchor:
-            url = "{}#{}".format(url, self.anchor)
+            url = f"{url}#{self.anchor}"
         return url
 
-    def get_docs_url(self):
+    def get_doc_url(self, user=None):
         return ""
 
 
@@ -75,8 +75,8 @@ class Group(Guideline):
 class VCSGroup(Group):
     description = _("Version control integration")
 
-    def get_docs_url(self):
-        return get_doc_url("vcs")
+    def get_doc_url(self, user=None):
+        return get_doc_url("vcs", user=user)
 
 
 @register
@@ -90,11 +90,14 @@ class HookGuideline(Guideline):
     def is_passing(self):
         return self.component.change_set.filter(action=Change.ACTION_HOOK).exists()
 
-    def get_url(self):
-        return self.get_docs_url()
+    def is_relevant(self):
+        return not self.component.is_repo_link
 
-    def get_docs_url(self):
-        return get_doc_url("admin/continuous", "update-vcs")
+    def get_url(self):
+        return self.get_doc_url()
+
+    def get_doc_url(self, user=None):
+        return get_doc_url("admin/continuous", "update-vcs", user=user)
 
 
 @register
@@ -108,16 +111,16 @@ class PushGuideline(Guideline):
     def is_passing(self):
         return self.component.can_push()
 
-    def get_docs_url(self):
-        return get_doc_url("admin/continuous", "push-changes")
+    def get_doc_url(self, user=None):
+        return get_doc_url("admin/continuous", "push-changes", user=user)
 
 
 @register
 class CommunityGroup(Group):
     description = _("Building community")
 
-    def get_docs_url(self):
-        return get_doc_url("devel/community")
+    def get_doc_url(self, user=None):
+        return get_doc_url("devel/community", user=user)
 
 
 @register
@@ -132,8 +135,8 @@ class InstructionsGuideline(Guideline):
             "settings", kwargs=self.component.project.get_reverse_url_kwargs()
         )
 
-    def get_docs_url(self):
-        return get_doc_url("admin/project", "project")
+    def get_doc_url(self, user=None):
+        return get_doc_url("admin/projects", "project", user=user)
 
 
 @register
@@ -145,7 +148,7 @@ class LicenseGuideline(Guideline):
     def is_passing(self):
         return self.component.libre_license
 
-    def get_docs_url(self):
+    def get_doc_url(self, user=None):
         return "https://choosealicense.com/"
 
 
@@ -158,16 +161,16 @@ class AlertGuideline(Guideline):
     def is_passing(self):
         return not self.component.all_alerts
 
-    def get_docs_url(self):
-        return get_doc_url("devel/alerts")
+    def get_doc_url(self, user=None):
+        return get_doc_url("devel/alerts", user=user)
 
 
 @register
 class ContextGroup(Group):
     description = _("Provide context to the translators")
 
-    def get_docs_url(self):
-        return get_doc_url("admin/translating", "additional")
+    def get_doc_url(self, user=None):
+        return get_doc_url("admin/translating", "additional", user=user)
 
 
 @register
@@ -180,8 +183,8 @@ class ScreenshotGuideline(Guideline):
 
         return Screenshot.objects.filter(translation__component=self.component).exists()
 
-    def get_docs_url(self):
-        return get_doc_url("admin/translating", "screenshots")
+    def get_doc_url(self, user=None):
+        return get_doc_url("admin/translating", "screenshots", user=user)
 
 
 @register
@@ -198,8 +201,8 @@ class FlagsGuideline(Guideline):
             ).exists()
         )
 
-    def get_docs_url(self):
-        return get_doc_url("admin/checks", "custom-checks")
+    def get_doc_url(self, user=None):
+        return get_doc_url("admin/checks", "custom-checks", user=user)
 
 
 @register
@@ -221,16 +224,16 @@ class SafeHTMLGuideline(Guideline):
             ).exists()
         )
 
-    def get_docs_url(self):
-        return get_doc_url("user/checks", "check-safe-html")
+    def get_doc_url(self, user=None):
+        return get_doc_url("user/checks", "check-safe-html", user=user)
 
 
 @register
 class AddonsGroup(Group):
     description = _("Workflow customization")
 
-    def get_docs_url(self):
-        return get_doc_url("admin/addons")
+    def get_doc_url(self, user=None):
+        return get_doc_url("admin/addons", user=user)
 
 
 class AddonGuideline(Guideline):
@@ -250,8 +253,10 @@ class AddonGuideline(Guideline):
         addon = ADDONS[self.addon]
         return addon.can_install(self.component, None)
 
-    def get_docs_url(self):
-        return get_doc_url("admin/addons", ADDONS[self.addon].get_doc_anchor())
+    def get_doc_url(self, user=None):
+        return get_doc_url(
+            "admin/addons", ADDONS[self.addon].get_doc_anchor(), user=user
+        )
 
     @property
     def description(self):
@@ -269,7 +274,7 @@ class LanguageConsistencyGuideline(AddonGuideline):
     addon = "weblate.consistency.languages"
 
     def is_relevant(self):
-        if self.component.project.component_set.count() <= 1:
+        if self.component.project.component_set.exclude(is_glossary=True).count() <= 1:
             return False
         return super().is_relevant()
 

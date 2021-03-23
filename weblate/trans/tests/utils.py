@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -179,7 +179,7 @@ class RepoTestMixin:
     def format_local_path(self, path):
         """Format path for local access to the repository."""
         if sys.platform != "win32":
-            return "file://{}".format(path)
+            return f"file://{path}"
         return "file:///{}".format(path.replace("\\", "/"))
 
     def _create_component(
@@ -190,17 +190,17 @@ class RepoTestMixin:
         new_base="",
         vcs="git",
         branch=None,
-        **kwargs
+        **kwargs,
     ):
         """Create real test component."""
         if file_format not in FILE_FORMATS:
-            raise SkipTest("File format {0} is not supported!".format(file_format))
+            raise SkipTest(f"File format {file_format} is not supported!")
         if "project" not in kwargs:
             kwargs["project"] = self.create_project()
 
-        repo = push = self.format_local_path(getattr(self, "{0}_repo_path".format(vcs)))
+        repo = push = self.format_local_path(getattr(self, f"{vcs}_repo_path"))
         if vcs not in VCS_REGISTRY:
-            raise SkipTest("VCS {0} not available!".format(vcs))
+            raise SkipTest(f"VCS {vcs} not available!")
 
         if "new_lang" not in kwargs:
             kwargs["new_lang"] = "contact"
@@ -211,6 +211,9 @@ class RepoTestMixin:
         if "name" not in kwargs:
             kwargs["name"] = "Test"
         kwargs["slug"] = kwargs["name"].lower()
+
+        if "manage_units" not in kwargs and template:
+            kwargs["manage_units"] = True
 
         if branch is None:
             branch = VCS_REGISTRY[vcs].default_branch
@@ -225,7 +228,7 @@ class RepoTestMixin:
             repoweb=REPOWEB_URL,
             new_base=new_base,
             vcs=vcs,
-            **kwargs
+            **kwargs,
         )
 
     def create_component(self):
@@ -272,7 +275,7 @@ class RepoTestMixin:
         return self._create_component("srt", "srt/*.srt", "srt/en.srt")
 
     def create_ts(self, suffix="", **kwargs):
-        return self._create_component("ts", "ts{0}/*.ts".format(suffix), **kwargs)
+        return self._create_component("ts", f"ts{suffix}/*.ts", **kwargs)
 
     def create_ts_mono(self):
         return self._create_component("ts", "ts-mono/*.ts", "ts-mono/en.ts")
@@ -285,9 +288,9 @@ class RepoTestMixin:
     def create_android(self, suffix="", **kwargs):
         return self._create_component(
             "aresource",
-            "android{}/values-*/strings.xml".format(suffix),
-            "android{}/values/strings.xml".format(suffix),
-            **kwargs
+            f"android{suffix}/values-*/strings.xml",
+            f"android{suffix}/values/strings.xml",
+            **kwargs,
         )
 
     def create_json(self):
@@ -295,10 +298,7 @@ class RepoTestMixin:
 
     def create_json_mono(self, suffix="mono", **kwargs):
         return self._create_component(
-            "json",
-            "json-{}/*.json".format(suffix),
-            "json-{}/en.json".format(suffix),
-            **kwargs
+            "json", f"json-{suffix}/*.json", f"json-{suffix}/en.json", **kwargs
         )
 
     def create_json_webextension(self):
@@ -314,7 +314,7 @@ class RepoTestMixin:
             "intermediate/*.json",
             "intermediate/en.json",
             intermediate="intermediate/dev.json",
-            **kwargs
+            **kwargs,
         )
 
     def create_json_intermediate_empty(self, **kwargs):
@@ -323,7 +323,7 @@ class RepoTestMixin:
             "intermediate/lang-*.json",
             "intermediate/lang-en.json",
             intermediate="intermediate/dev.json",
-            **kwargs
+            **kwargs,
         )
 
     def create_joomla(self):
@@ -352,7 +352,7 @@ class RepoTestMixin:
         )
 
     def create_xliff(self, name="default", **kwargs):
-        return self._create_component("xliff", "xliff/*/{0}.xlf".format(name), **kwargs)
+        return self._create_component("xliff", f"xliff/*/{name}.xlf", **kwargs)
 
     def create_xliff_mono(self):
         return self._create_component("xliff", "xliff-mono/*.xlf", "xliff-mono/en.xlf")
@@ -381,6 +381,12 @@ class RepoTestMixin:
     def create_odt(self):
         return self._create_component("odf", "odt/*.odt", "odt/en.odt")
 
+    def create_winrc(self):
+        return self._create_component("rc", "winrc/*.rc", "winrc/en-US.rc")
+
+    def create_tbx(self):
+        return self._create_component("tbx", "tbx/*.tbx")
+
     def create_link(self, **kwargs):
         parent = self.create_iphone(*kwargs)
         return Component.objects.create(
@@ -394,13 +400,16 @@ class RepoTestMixin:
         )
 
     def create_link_existing(self):
+        component = self.component
+        if "linked_childs" in component.__dict__:
+            del component.__dict__["linked_childs"]
         return Component.objects.create(
             name="Test2",
             slug="test2",
             project=self.project,
-            repo="weblate://test/test",
+            repo=component.get_repo_link_url(),
             file_format="po",
-            filemask="po-duplicates/*.po",
+            filemask="po-duplicates/*.dpo",
             new_lang="contact",
         )
 

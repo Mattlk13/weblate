@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -47,9 +47,9 @@ def cdn_parse_html(files: str, selector: str, component_id: int):
                 with request("get", filename) as handle:
                     content = handle.read()
             else:
-                with open(os.path.join(component.full_path, filename), "r") as handle:
+                with open(os.path.join(component.full_path, filename)) as handle:
                     content = handle.read()
-        except IOError as error:
+        except OSError as error:
             errors.append({"filename": filename, "error": str(error)})
             continue
 
@@ -67,13 +67,8 @@ def cdn_parse_html(files: str, selector: str, component_id: int):
             units.append(text)
 
     # Actually create units
-    if units:
-        source_translation.new_unit(
-            request=None,
-            key=None,
-            value=None,
-            batch={calculate_checksum(text): text for text in units},
-        )
+    for text in units:
+        source_translation.add_unit(None, calculate_checksum(text), text, None)
 
     if errors:
         component.add_alert("CDNAddonError", occurrences=errors)

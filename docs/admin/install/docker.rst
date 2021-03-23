@@ -1,5 +1,3 @@
-.. _quick-docker:
-
 Installing using Docker
 =======================
 
@@ -195,8 +193,8 @@ case as it's not straightforward to upgrade the database, see `GitHub issue <htt
 
 .. _docker-admin-login:
 
-Admin login
------------
+Admin sign in
+-------------
 
 After container setup, you can sign in as `admin` user with password provided
 in :envvar:`WEBLATE_ADMIN_PASSWORD`, or a random password generated on first
@@ -234,7 +232,7 @@ Generic settings
 
     .. seealso::
 
-            :ref:`production-debug`.
+            :ref:`production-debug`
 
 .. envvar:: WEBLATE_LOGLEVEL
 
@@ -247,11 +245,7 @@ Generic settings
 
 .. envvar:: WEBLATE_SITE_DOMAIN
 
-    Configures the site domain.
-
-    .. hint::
-
-        In case it is not set, the first item from :envvar:`WEBLATE_ALLOWED_HOSTS` is used.
+    Configures the site domain. This parameter is required.
 
     .. seealso::
 
@@ -377,6 +371,10 @@ Generic settings
     Makes Weblate assume it is operated behind a reverse HTTPS proxy, it makes
     Weblate use HTTPS in e-mail and API links or set secure flags on cookies.
 
+    .. hint::
+
+        Please see :setting:`ENABLE_HTTPS` documentation for possible caveats.
+
     .. note::
 
         This does not make the Weblate container accept HTTPS connections, you
@@ -391,7 +389,9 @@ Generic settings
 
     .. seealso::
 
-        :ref:`production-site`
+      :setting:`ENABLE_HTTPS`
+      :ref:`production-site`,
+      :envvar:`WEBLATE_SECURE_PROXY_SSL_HEADER`
 
 .. envvar:: WEBLATE_IP_PROXY_HEADER
 
@@ -439,7 +439,7 @@ Generic settings
 
 .. envvar:: WEBLATE_REQUIRE_LOGIN
 
-    Configures login required for the whole of the Weblate installation using :setting:`LOGIN_REQUIRED_URLS`.
+    Enables :setting:`REQUIRE_LOGIN` to enforce authentication on whole Weblate.
 
     **Example:**
 
@@ -452,7 +452,8 @@ Generic settings
 .. envvar:: WEBLATE_ADD_LOGIN_REQUIRED_URLS_EXCEPTIONS
 .. envvar:: WEBLATE_REMOVE_LOGIN_REQUIRED_URLS_EXCEPTIONS
 
-    Adds URL exceptions for login required for the whole Weblate installation using :setting:`LOGIN_REQUIRED_URLS_EXCEPTIONS`.
+    Adds URL exceptions for authentication required for the whole Weblate
+    installation using :setting:`LOGIN_REQUIRED_URLS_EXCEPTIONS`.
 
     You can either replace whole settings, or modify default value using ``ADD`` and ``REMOVE`` variables.
 
@@ -498,6 +499,24 @@ Generic settings
 
        :ref:`vcs-gitlab`
 
+.. envvar:: WEBLATE_PAGURE_USERNAME
+
+    Configures Pagure username for Pagure merge-requests by changing
+    :setting:`PAGURE_USERNAME`
+
+    .. seealso::
+
+       :ref:`vcs-pagure`
+
+.. envvar:: WEBLATE_PAGURE_TOKEN
+
+    Configures Pagure personal access token for Pagure merge-requests via API by changing
+    :setting:`PAGURE_TOKEN`
+
+    .. seealso::
+
+       :ref:`vcs-pagure`
+
 .. envvar:: WEBLATE_SIMPLIFY_LANGUAGES
 
     Configures the language simplification policy, see :setting:`SIMPLIFY_LANGUAGES`.
@@ -521,6 +540,10 @@ Generic settings
 .. envvar:: WEBLATE_DEFAULT_COMMITER_NAME
 
     Configures :setting:`DEFAULT_COMMITER_NAME`.
+
+.. envvar::  WEBLATE_DEFAULT_SHARED_TM
+
+   Configures :setting:`DEFAULT_SHARED_TM`.
 
 .. envvar:: WEBLATE_AKISMET_API_KEY
 
@@ -563,6 +586,18 @@ Generic settings
 .. envvar:: WEBLATE_LICENSE_FILTER
 
     Configures :setting:`LICENSE_FILTER`.
+
+.. envvar:: WEBLATE_HIDE_VERSION
+
+    Configures :setting:`HIDE_VERSION`.
+
+.. envvar:: WEBLATE_BASIC_LANGUAGES
+
+    Configures :setting:`BASIC_LANGUAGES`.
+
+.. envvar:: WEBLATE_DEFAULT_AUTO_WATCH
+
+   Configures :setting:`DEFAULT_AUTO_WATCH`.
 
 Machine translation settings
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -885,6 +920,10 @@ both Weblate and PostgreSQL containers.
    Configure how PostgreSQL handles SSL in connection to the server, for possible choices see
    `SSL Mode Descriptions <https://www.postgresql.org/docs/11/libpq-ssl.html#LIBPQ-SSL-SSLMODE-STATEMENTS>`_
 
+.. envvar:: POSTGRES_ALTER_ROLE
+
+    Configures name of role to alter during migrations, see :ref:`config-postgresql`.
+
 
 Database backup settings
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -928,6 +967,8 @@ instance when running Weblate in Docker.
 .. envvar:: REDIS_VERIFY_SSL
 
     Can be used to disable SSL certificate verification for Redis connection.
+
+.. _docker-mail:
 
 Email server setup
 ~~~~~~~~~~~~~~~~~~
@@ -1022,6 +1063,21 @@ Example SSL configuration:
 
         :ref:`production-email`,
         :setting:`django:EMAIL_BACKEND`
+
+Site integration
+~~~~~~~~~~~~~~~~
+
+.. envvar:: WEBLATE_GET_HELP_URL
+
+   Configures :setting:`GET_HELP_URL`.
+
+.. envvar:: WEBLATE_STATUS_URL
+
+   Configures :setting:`STATUS_URL`.
+
+.. envvar:: WEBLATE_LEGAL_URL
+
+   Configures :setting:`LEGAL_URL`.
 
 Error reporting
 ~~~~~~~~~~~~~~~
@@ -1119,6 +1175,7 @@ Container settings
 
 .. envvar:: CELERY_MAIN_OPTIONS
 .. envvar:: CELERY_NOTIFY_OPTIONS
+.. envvar:: CELERY_MEMORY_OPTIONS
 .. envvar:: CELERY_TRANSLATE_OPTIONS
 .. envvar:: CELERY_BACKUP_OPTIONS
 .. envvar:: CELERY_BEAT_OPTIONS
@@ -1155,7 +1212,7 @@ Container settings
         environment:
           UWSGI_WORKERS: 32
 
-In case you have lot of CPU cores and hit out of memory issues, try reducing
+In case you have a lot of CPU cores and hit out of memory issues, try reducing
 number of workers:
 
 .. code-block:: yaml
@@ -1201,8 +1258,8 @@ Custom configuration files
 
 You can additionally override the configuration in
 :file:`/app/data/settings-override.py` (see :ref:`docker-volume`). This is
-executed after all environment settings are loaded, so it gets completely set
-up, and can be used to customize anything.
+executed at the end of built-in settings, after all environment settings
+are loaded, and you can adjust or override them.
 
 Replacing logo and other static files
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

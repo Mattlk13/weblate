@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -18,10 +18,10 @@
 #
 """Base code for machine translation services."""
 
-
 import random
+from difflib import get_close_matches
 from hashlib import md5
-from typing import Dict
+from typing import Dict, Set
 
 from django.core.cache import cache
 from django.core.exceptions import ImproperlyConfigured
@@ -39,8 +39,8 @@ from weblate.utils.site import get_site_url
 
 
 def get_machinery_language(language):
-    if language.code == "en_devel":
-        return Language.objects.english
+    if language.code.endswith("_devel"):
+        return Language.objects.get(code=language.code[:-6])
     return language
 
 
@@ -56,6 +56,10 @@ class MachineryRateLimit(MachineTranslationError):
     """Raised when rate limiting is detected."""
 
 
+class UnsupportedLanguage(MachineTranslationError):
+    """Raised when language is not supported."""
+
+
 class MachineTranslation:
     """Generic object for machine translation services."""
 
@@ -66,6 +70,8 @@ class MachineTranslation:
     language_map: Dict[str, str] = {}
     same_languages = False
     do_cleanup = True
+    batch_size = 100
+    accounting_key = "external"
 
     @classmethod
     def get_rank(cls):
@@ -74,8 +80,8 @@ class MachineTranslation:
     def __init__(self):
         """Create new machine translation object."""
         self.mtid = self.name.lower().replace(" ", "-")
-        self.rate_limit_cache = "{}-rate-limit".format(self.mtid)
-        self.languages_cache = "{}-languages".format(self.mtid)
+        self.rate_limit_cache = f"{self.mtid}-rate-limit"
+        self.languages_cache = f"{self.mtid}-languages"
         self.comparer = Comparer()
         self.supported_languages_error = None
 
@@ -84,6 +90,13 @@ class MachineTranslation:
 
     def get_identifier(self):
         return self.mtid
+
+    def account_usage(self, project, delta: int = 1):
+        key = f"machinery-accounting:{self.accounting_key}:{project.id}"
+        try:
+            cache.incr(key, delta=delta)
+        except ValueError:
+            cache.set(key, delta)
 
     def get_authentication(self):
         """Hook for backends to allow add authentication headers to request."""
@@ -120,7 +133,16 @@ class MachineTranslation:
         """Download list of supported languages from a service."""
         return []
 
-    def download_translations(self, source, language, text, unit, user, search):
+    def download_translations(
+        self,
+        source,
+        language,
+        text: str,
+        unit,
+        user,
+        search: bool,
+        threshold: int = 75,
+    ):
         """Download list of possible translations from a service.
 
         Should return dict with translation text, translation quality, source of
@@ -192,19 +214,23 @@ class MachineTranslation:
         if not isinstance(exc, HTTPError):
             return False
         # Apply rate limiting for following status codes:
+        # HTTP 456 Client Error: Quota Exceeded (DeepL)
         # HTTP 429 Too Many Requests
         # HTTP 401 Unauthorized
         # HTTP 403 Forbidden
         # HTTP 503 Service Unavailable
-        if exc.response.status_code in (429, 401, 403, 503):
+        if exc.response.status_code in (456, 429, 401, 403, 503):
             return True
         return False
 
-    def translate_cache_key(self, source, language, text):
+    def translate_cache_key(self, source, language, text, threshold):
         if not self.cache_translations:
             return None
-        return "mt:{}:{}:{}".format(
-            self.mtid, calculate_hash(source, language), calculate_hash(text)
+        return "mt:{}:{}:{}:{}".format(
+            self.mtid,
+            calculate_hash(source, language),
+            calculate_hash(text),
+            threshold,
         )
 
     def cleanup_text(self, unit):
@@ -238,55 +264,85 @@ class MachineTranslation:
                     text = text.replace(source, target)
                 result[key] = text
 
-    def translate(self, unit, user=None, search=None, language=None, source=None):
-        """Return list of machine translations."""
-        # source and language are set only for recursive calls when
-        # tweaking the language codes
-        if source is None:
-            language = self.convert_language(unit.translation.language)
-            source = self.convert_language(unit.translation.component.source_language)
+    def get_variants(self, language):
+        code = self.convert_language(language)
+        yield code
+        if not isinstance(code, str):
+            return
+        code = code.replace("-", "_")
+        if "_" in code:
+            yield code.split("_")[0]
 
+    def get_languages(self, source_language, target_language):
+
+        if source_language == target_language and not self.same_languages:
+            raise UnsupportedLanguage("Same languages")
+
+        for source in self.get_variants(source_language):
+            for target in self.get_variants(target_language):
+                if self.is_supported(source, target):
+                    return source, target
+
+        if self.supported_languages_error:
+            raise MachineTranslationError(repr(self.supported_languages_error))
+
+        raise UnsupportedLanguage("Not supported")
+
+    def get_cached(self, source, language, text, threshold, replacements):
+        cache_key = self.translate_cache_key(source, language, text, threshold)
+        if cache_key:
+            result = cache.get(cache_key)
+            if result and replacements:
+                self.uncleanup_results(replacements, result)
+            return cache_key, result
+        return cache_key, None
+
+    def translate(self, unit, user=None, search=None, threshold: int = 75):
+        """Return list of machine translations."""
+        translation = unit.translation
+        try:
+            source, language = self.get_languages(
+                translation.component.source_language, translation.language
+            )
+        except UnsupportedLanguage:
+            unit.translation.log_debug(
+                "machinery failed: not supported language pair: %s - %s",
+                translation.component.source_language.code,
+                translation.language.code,
+            )
+            return []
+
+        self.account_usage(translation.component.project)
+        return self._translate(source, language, unit, user, search, threshold)
+
+    def _translate(
+        self, source, language, unit, user=None, search=None, threshold: int = 75
+    ):
         if search:
             replacements = {}
             text = search
         else:
             text, replacements = self.cleanup_text(unit)
 
-        if (
-            not text
-            or self.is_rate_limited()
-            or (source == language and not self.same_languages)
-        ):
+        if not text or self.is_rate_limited():
             return []
 
-        if not self.is_supported(source, language):
-            # Try without country code
-            source = source.replace("-", "_")
-            if "_" in source:
-                source = source.split("_")[0]
-                return self.translate(
-                    unit, user=user, search=search, language=language, source=source
-                )
-            language = language.replace("-", "_")
-            if "_" in language:
-                language = language.split("_")[0]
-                return self.translate(
-                    unit, user=user, search=search, language=language, source=source
-                )
-            if self.supported_languages_error:
-                raise MachineTranslationError(repr(self.supported_languages_error))
-            return []
-
-        cache_key = self.translate_cache_key(source, language, text)
-        if cache_key:
-            result = cache.get(cache_key)
-            if result is not None:
-                return result
+        cache_key, result = self.get_cached(
+            source, language, text, threshold, replacements
+        )
+        if result is not None:
+            return result
 
         try:
             result = list(
                 self.download_translations(
-                    source, language, text, unit, user, search=bool(search)
+                    source,
+                    language,
+                    text,
+                    unit,
+                    user,
+                    search=bool(search),
+                    threshold=threshold,
                 )
             )
             if replacements:
@@ -304,7 +360,7 @@ class MachineTranslation:
             raise MachineTranslationError(self.get_error_message(exc))
 
     def get_error_message(self, exc):
-        return "{0}: {1}".format(exc.__class__.__name__, str(exc))
+        return f"{exc.__class__.__name__}: {exc}"
 
     def signed_salt(self, appid, secret, text):
         """Generates salt and sign as used by Chinese services."""
@@ -314,3 +370,61 @@ class MachineTranslation:
         digest = md5(payload.encode()).hexdigest()  # nosec
 
         return salt, digest
+
+    def batch_translate(self, units, user=None, threshold: int = 75):
+        try:
+            translation = units[0].translation
+        except IndexError:
+            return
+        try:
+            source, language = self.get_languages(
+                translation.component.source_language, translation.language
+            )
+        except UnsupportedLanguage:
+            return
+
+        self.account_usage(translation.component.project, delta=len(units))
+        self._batch_translate(source, language, units, user=user, threshold=threshold)
+
+    def _batch_translate(self, source, language, units, user=None, threshold: int = 75):
+        for unit in units:
+            result = unit.machinery
+            if result["best"] >= self.max_score:
+                continue
+            for item in self._translate(
+                source, language, unit, user=user, threshold=threshold
+            ):
+                if result["best"] > item["quality"]:
+                    continue
+                result["best"] = item["quality"]
+                result["translation"] = item["text"]
+
+
+class BatchStringMachineTranslation(MachineTranslation):
+    # Cleanup is not handled in batch mode
+    do_cleanup = False
+
+    def download_batch_strings(
+        self, source, language, units, texts: Set[str], user=None, threshold: int = 75
+    ):
+        raise NotImplementedError()
+
+    def _batch_translate(self, source, language, units, user=None, threshold: int = 75):
+        # Get strings we need to translate
+        lookups = {
+            unit.source_string: unit
+            for unit in units
+            if unit.machinery["best"] < self.max_score
+        }
+        lookup_strings = set(lookups.keys())
+        cutoff = threshold / 100
+
+        for source_str, translation in self.download_batch_strings(
+            source, language, units, lookup_strings, user, threshold
+        ):
+            for match in get_close_matches(source_str, lookup_strings, cutoff=cutoff):
+                quality = self.comparer.similarity(match, source_str)
+                result = lookups[match].machinery
+                if quality > result["best"]:
+                    result["best"] = quality
+                    result["translation"] = translation

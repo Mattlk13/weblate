@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -45,7 +45,7 @@ def icon(name):
     if name not in CACHE:
         icon_file = os.path.join(settings.STATIC_ROOT, "icons", name)
         try:
-            with open(icon_file, "r") as handle:
+            with open(icon_file) as handle:
                 CACHE[name] = mark_safe(handle.read())
         except OSError:
             report_error(cause="Failed to load icon")
@@ -58,7 +58,7 @@ def icon(name):
 def loading_icon(name=None, hidden=True):
     return mark_safe(
         SPIN.format(
-            'id="loading-{}"'.format(name) if name else "",
+            f'id="loading-{name}"' if name else "",
             'style="display: none"' if hidden else "",
             icon("loading.svg"),
         )

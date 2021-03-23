@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -32,7 +32,7 @@ class RepoAdminMixin:
         for obj in queryset:
             obj.commit_pending("admin", request)
         self.message_user(
-            request, "Flushed changes in {0:d} git repos.".format(queryset.count())
+            request, f"Flushed changes in {queryset.count():d} git repos."
         )
 
     force_commit.short_description = _("Commit pending changes")
@@ -41,7 +41,7 @@ class RepoAdminMixin:
         """Update selected components from git."""
         for obj in queryset:
             obj.do_update(request)
-        self.message_user(request, "Updated {0:d} git repos.".format(queryset.count()))
+        self.message_user(request, f"Updated {queryset.count():d} git repos.")
 
     update_from_git.short_description = _("Update VCS repository")
 
@@ -60,7 +60,7 @@ class RepoAdminMixin:
         for translation in self.get_qs_translations(queryset):
             translation.invalidate_cache()
 
-        self.message_user(request, "Updated checks for {0:d} units.".format(len(units)))
+        self.message_user(request, "Updated checks for {:d} units.".format(len(units)))
 
     update_checks.short_description = _("Update quality checks")
 
@@ -153,12 +153,12 @@ class UnitAdmin(WeblateModelAdmin):
 
 class SuggestionAdmin(WeblateModelAdmin):
     list_display = ["target", "unit", "user"]
-    search_fields = ["unit__content_hash", "target"]
+    search_fields = ["unit__source", "target"]
 
 
 class CommentAdmin(WeblateModelAdmin):
     list_display = ["comment", "unit", "user"]
-    search_fields = ["unit__content_hash", "comment"]
+    search_fields = ["unit__source", "comment"]
 
 
 class ChangeAdmin(WeblateModelAdmin):

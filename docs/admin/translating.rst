@@ -7,7 +7,7 @@ Suggestion voting
 -----------------
 
 Everyone can add suggestions by default, to be accepted by signed in users.
-Suggestion voting can be used to make use of a string when more than signed in
+Suggestion voting can be used to make use of a string when more than one signed-in
 user agrees, by setting up the :ref:`component` configuration with
 :guilabel:`Suggestion voting` to turn on voting, and :guilabel:`Autoaccept suggestions`
 to set a threshold for accepted suggestions (this includes a vote from the user
@@ -17,10 +17,11 @@ making the suggestion if it is cast).
 
     Once automatic acceptance is set up, normal users lose the privilege to
     directly save translations or accept suggestions. This can be overridden
-    with the :guilabel:`Edit string when suggestions are enforced` privilege
-    (see :ref:`privileges`).
+    with the :guilabel:`Edit string when suggestions are enforced`
+    :ref:`permission <privileges>`.
 
-You can combine these with :ref:`privileges` into one of the following setups:
+You can combine these with :ref:`access control <access-control>` into one of
+the following setups:
 
 * Users suggest and vote for suggestions and a limited group controls what is
   accepted.
@@ -40,9 +41,10 @@ You can combine these with :ref:`privileges` into one of the following setups:
 Additional info on source strings
 ---------------------------------
 
-Enhance the translation process with info available in the translation files.
-This includes explanation, string priority, check flags, or providing visual
-context.  All these features can be set in the :ref:`source-review`:
+Enhance the translation process by adding additional info to the strings
+including explanations, string priorities, check flags and visual context. Some
+of that info may be extracted from the translation files and some may be added
+by editing the additional string info:
 
 .. image:: /images/source-review-edit.png
 
@@ -57,7 +59,7 @@ Strings prioritization
 .. versionadded:: 2.0
 
 String priority can be changed to offer higher priority strings for translation earlier by
-using the ``priority`` flag
+using the ``priority`` flag.
 
 .. hint::
 
@@ -86,7 +88,7 @@ Explanation
 
 .. versionchanged:: 4.1
 
-    In previous version this has been called extra context.
+    In previous versions this has been called :guilabel:`Extra context`.
 
 Use the explanation to clarify scope or usage of the translation. You can use
 Markdown to include links and other markup.
@@ -106,7 +108,7 @@ The uploaded screenshot is shown in the translation context sidebar:
 
 .. image:: /images/screenshot-context.png
 
-In addition to :ref:`source-review`, screenshots have a separate management
+In addition to :ref:`additional`, screenshots have a separate management
 interface under the :guilabel:`Tools` menu.
 Upload screenshots, assign them to source strings manually, or use
 optical character recognition to do so.

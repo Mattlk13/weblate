@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -25,13 +25,12 @@ from django.core import mail
 from django.core.signing import TimestampSigner
 from django.test.utils import modify_settings, override_settings
 from django.urls import reverse
-from django.utils.encoding import force_str
 from jsonschema import validate
 from social_core.backends.utils import load_backends
 from weblate_schemas import load_schema
 
 from weblate.accounts.models import Profile, Subscription
-from weblate.accounts.notifications import FREQ_DAILY, FREQ_NONE, SCOPE_DEFAULT
+from weblate.accounts.notifications import FREQ_DAILY, FREQ_NONE, SCOPE_WATCHED
 from weblate.auth.models import User
 from weblate.lang.models import Language
 from weblate.trans.tests.test_models import RepoTestCase
@@ -127,16 +126,15 @@ class ViewTest(RepoTestCase):
         response = self.client.get(reverse("hosting"))
         self.assertRedirects(response, reverse("home"))
 
-    @override_settings(
-        OFFER_HOSTING=True,
-        ADMINS_HOSTING=["noreply@example.com"],
-    )
-    def test_hosting(self):
+    @override_settings(OFFER_HOSTING=True)
+    def test_libre(self):
         """Test for hosting form with enabled hosting."""
         from weblate.billing.models import Plan
 
+        self.get_user()
+        self.client.login(username="testuser", password="testpassword")
+
         Plan.objects.create(price=0, slug="libre", name="Libre")
-        user = self.get_user()
         self.client.login(username="testuser", password="testpassword")
         response = self.client.get(reverse("hosting"))
         self.assertContains(response, "trial")
@@ -144,72 +142,6 @@ class ViewTest(RepoTestCase):
         # Creating a trial
         response = self.client.post(reverse("trial"), {"plan": "libre"}, follow=True)
         self.assertContains(response, "Create project")
-        # Flush outbox
-        mail.outbox = []
-
-        # Add component to a trial
-        component = self.create_component()
-        billing = user.billing_set.get()
-        billing.projects.add(component.project)
-
-        # Not valid for libre
-        self.assertFalse(billing.valid_libre)
-        response = self.client.post(
-            reverse("hosting"),
-            {"billing": billing.pk, "request": "1", "message": "msg"},
-            follow=True,
-        )
-        self.assertNotContains(response, "Pending approval")
-
-        # Add missing license info
-        component.license = "GPL-3.0-or-later"
-        component.save()
-        billing = user.billing_set.get()
-
-        # Valid for libre
-        self.assertTrue(billing.valid_libre)
-        response = self.client.post(
-            reverse("hosting"),
-            {"billing": billing.pk, "request": "1", "message": "msg"},
-            follow=True,
-        )
-        self.assertContains(response, "Pending approval")
-
-        # Verify message
-        self.assertEqual(len(mail.outbox), 1)
-        self.assertEqual(
-            mail.outbox[0].subject, "[Weblate] Hosting request for Test (Libre)"
-        )
-        self.assertIn("testuser", mail.outbox[0].body)
-        self.assertEqual(mail.outbox[0].to, ["noreply@example.com"])
-
-        # Non-admin approval
-        response = self.client.post(
-            reverse("hosting"),
-            {"billing": billing.pk, "approve": "1"},
-            follow=True,
-        )
-        self.assertContains(response, "Pending approval")
-
-        # Admin extension
-        user.is_superuser = True
-        user.save()
-        response = self.client.post(
-            reverse("hosting"),
-            {"billing": billing.pk, "extend": "1"},
-            follow=True,
-        )
-        self.assertContains(response, "Pending approval")
-
-        # Admin approval
-        user.is_superuser = True
-        user.save()
-        response = self.client.post(
-            reverse("hosting"),
-            {"billing": billing.pk, "approve": "1"},
-            follow=True,
-        )
-        self.assertNotContains(response, "Pending approval")
 
     @override_settings(OFFER_HOSTING=False)
     def test_trial_disabled(self):
@@ -468,7 +400,7 @@ class ProfileTest(FixtureTestCase):
                 "nearby_strings": 10,
             },
         )
-        self.assertRedirects(response, reverse("profile"))
+        self.assertContains(response, "Select a valid choice.")
 
     def test_userdata(self):
         response = self.client.post(reverse("userdata"))
@@ -499,7 +431,7 @@ class ProfileTest(FixtureTestCase):
                 elif isinstance(value, list):
                     data[name] = value
                 else:
-                    data[name] = force_str(value)
+                    data[name] = str(value)
 
         # Save unchanged data
         response = self.client.post(reverse("profile"), data, follow=True)
@@ -507,14 +439,14 @@ class ProfileTest(FixtureTestCase):
         self.assertEqual(self.user.subscription_set.count(), 8)
 
         # Remove some subscriptions
-        data["notifications__0-notify-LastAuthorCommentNotificaton"] = "0"
-        data["notifications__0-notify-MentionCommentNotificaton"] = "0"
+        data["notifications__1-notify-LastAuthorCommentNotificaton"] = "0"
+        data["notifications__1-notify-MentionCommentNotificaton"] = "0"
         response = self.client.post(reverse("profile"), data, follow=True)
         self.assertContains(response, "Your profile has been updated.")
         self.assertEqual(self.user.subscription_set.count(), 6)
 
         # Add some subscriptions
-        data["notifications__1-notify-ChangedStringNotificaton"] = "1"
+        data["notifications__2-notify-ChangedStringNotificaton"] = "1"
         response = self.client.post(reverse("profile"), data, follow=True)
         self.assertContains(response, "Your profile has been updated.")
         self.assertEqual(self.user.subscription_set.count(), 7)
@@ -610,7 +542,7 @@ class ProfileTest(FixtureTestCase):
         self.assertContains(response, "notification change link is no longer valid")
 
         subscription = Subscription.objects.create(
-            user=self.user, notification="x", frequency=FREQ_DAILY, scope=SCOPE_DEFAULT
+            user=self.user, notification="x", frequency=FREQ_DAILY, scope=SCOPE_WATCHED
         )
         response = self.client.get(
             reverse("unsubscribe"),

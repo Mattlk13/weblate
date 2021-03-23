@@ -19,9 +19,7 @@ Installation
 
 .. code-block:: python
 
-    INSTALLED_APPS += (
-        'weblate.gitexport',
-    )
+    INSTALLED_APPS += ("weblate.gitexport",)
 
 2. Export existing repositories by migrating your database after installation:
 
@@ -35,19 +33,28 @@ Usage
 The module automatically hooks into Weblate and sets the exported repository URL in
 the :ref:`component`.
 The repositories are accessible under the ``/git/`` part of the Weblate URL, for example
-``https://example.org/git/weblate/master/``:
+``https://example.org/git/weblate/master/``.
+
+Repositories for publicly available projects can be cloned without authentication:
 
 .. code-block:: sh
 
     git clone 'https://example.org/git/weblate/master/'
 
-Repositories are available anonymously unless :ref:`acl` is turned on.
-This requires authenticate using your API token (it can be obtained in your
-:ref:`user-profile`):
+Access to browse the repositories with restricted access (with `Private`
+:ref:`access control <acl>` or when :setting:`REQUIRE_LOGIN` is enabled)
+requires an API token which can be obtained in your
+:ref:`user profile <user-profile>`:
 
 .. code-block:: sh
 
     git clone 'https://user:KEY@example.org/git/weblate/master/'
+
+.. hint::
+
+   By default members or :guilabel:`Users` group and anonymous user have access
+   to the repositories for public projects via :guilabel:`Access repository`
+   and :guilabel:`Power user` roles.
 
 
 .. _billing:
@@ -68,9 +75,7 @@ Installation
 
 .. code-block:: python
 
-    INSTALLED_APPS += (
-        'weblate.billing',
-    )
+    INSTALLED_APPS += ("weblate.billing",)
 
 2. Run the database migration to optionally install additional database structures for the module:
 
@@ -119,8 +124,8 @@ following templates in the documents:
 
 .. note::
 
-    Legal documents for the Hosted Weblate service is available in this Git repository
-    <https://github.com/WeblateOrg/hosted/tree/master/wlhosted/legal/templates/legal/documents>.
+    Legal documents for the Hosted Weblate service are available in this Git repository
+    <https://github.com/WeblateOrg/wllegal/tree/master/wllegal/templates/legal/documents>.
 
     Most likely these will not be directly usable to you, but might come in handy
     as a starting point if adjusted to meet your needs.
@@ -133,20 +138,16 @@ Installation
 
 .. code-block:: python
 
-    INSTALLED_APPS += (
-        'weblate.legal',
-    )
+    INSTALLED_APPS += ("weblate.legal",)
 
     # Optional:
 
-    # Social auth pipeline to confirm TOS upon registration/subsequent login
-    SOCIAL_AUTH_PIPELINE += (
-        'weblate.legal.pipeline.tos_confirm',
-    )
+    # Social auth pipeline to confirm TOS upon registration/subsequent sign in
+    SOCIAL_AUTH_PIPELINE += ("weblate.legal.pipeline.tos_confirm",)
 
     # Middleware to enforce TOS confirmation of signed in users
     MIDDLEWARE += [
-        'weblate.legal.middleware.RequireTOSMiddleware',
+        "weblate.legal.middleware.RequireTOSMiddleware",
     ]
 
 2. Run the database migration to optionally install additional database structures for the module:
@@ -174,6 +175,7 @@ turned off using :setting:`ENABLE_AVATARS`.
 Weblate currently supports:
 
 * `Gravatar <https://gravatar.com/>`_
+* `Libravatar <https://www.libravatar.org/>`_
 
 .. seealso::
 
@@ -186,11 +188,17 @@ Weblate currently supports:
 Spam protection
 ---------------
 
-You can protect against suggestion spamming by unauthenticated users by using
-the `akismet.com <https://akismet.com/>`_ service.
+You can protect against spamming by users by using the `Akismet
+<https://akismet.com/>`_ service.
 
-1. Install the `akismet` Python module
-2. Configure the Akismet API key.
+1. Install the `akismet` Python module (this is already included in the official Docker image).
+2. Obtain the Akismet API key.
+3. Store it as :setting:`AKISMET_API_KEY` or :envvar:`WEBLATE_AKISMET_API_KEY` in Docker.
+
+Following content is sent to Akismet for checking:
+
+* Suggestions from unauthenticated users
+* Project and component descriptions and links
 
 .. note::
 
@@ -200,7 +208,8 @@ the `akismet.com <https://akismet.com/>`_ service.
 .. seealso::
 
     :ref:`reverse-proxy`,
-    :setting:`AKISMET_API_KEY`
+    :setting:`AKISMET_API_KEY`,
+    :envvar:`WEBLATE_AKISMET_API_KEY`
 
 
 .. _gpg-sign:
@@ -251,7 +260,7 @@ The following operations are subject to rate limiting:
 +-----------------------------------+--------------------+------------------+------------------+----------------+
 | Sending message to admins         | ``MESSAGE``        |                5 |              300 |            600 |
 +-----------------------------------+--------------------+------------------+------------------+----------------+
-| Password authentication on login  | ``LOGIN``          |                5 |              300 |            600 |
+| Password authentication on sign in| ``LOGIN``          |                5 |              300 |            600 |
 +-----------------------------------+--------------------+------------------+------------------+----------------+
 | Sitewide search                   | ``SEARCH``         |                6 |               60 |             60 |
 +-----------------------------------+--------------------+------------------+------------------+----------------+
@@ -259,10 +268,26 @@ The following operations are subject to rate limiting:
 +-----------------------------------+--------------------+------------------+------------------+----------------+
 | Adding to glossary                | ``GLOSSARY``       |               30 |               60 |            600 |
 +-----------------------------------+--------------------+------------------+------------------+----------------+
+| Starting translation into a new   | ``LANGUAGE``       |                2 |              300 |            600 |
+| language                          |                    |                  |                  |                |
++-----------------------------------+--------------------+------------------+------------------+----------------+
 
 If a user fails to log in :setting:`AUTH_LOCK_ATTEMPTS` times, password authentication will be turned off on the account until having gone through the process of having its password reset.
+
+The API has separate rate limiting settings, see :ref:`api-rate`.
 
 .. seealso::
 
    :ref:`user-rate`,
-   :ref:`reverse-proxy`
+   :ref:`reverse-proxy`,
+   :ref:`api-rate`
+
+Fedora Messaging integration
+----------------------------
+
+Fedora Messaging is AMQP-based publisher for all changes happening in Weblate.
+You can hook additional services on changes happening in Weblate using this.
+
+The Fedora Messaging integration is available as a separate Python module
+``weblate-fedora-messaging``. Please see
+<https://github.com/WeblateOrg/fedora_messaging/> for setup instructions.

@@ -4,7 +4,7 @@ Upgrading Weblate
 Docker image upgrades
 ---------------------
 
-The official Docker image (see :ref:`quick-docker`) has all upgrade steps
+The official Docker image (see :doc:`install/docker`) has all upgrade steps
 integrated. There are no manual step besides pulling latest version.
 
 .. _generic-upgrade-instructions:
@@ -160,6 +160,51 @@ Notable configuration or dependencies changes:
 * The database migration to 4.3 might take long depending on number of strings you are translating (expect around one hour of migration time per 100,000 source strings).
 * There is a change in :setting:`django:INSTALLED_APPS`.
 * There is a new setting :setting:`SESSION_COOKIE_AGE_AUTHENTICATED` which complements :setting:`django:SESSION_COOKIE_AGE`.
+* In case you were using :command:`hub` or :command:`lab` to integrate with GitHub or GitLab, you will need to reconfigure this, see :setting:`GITHUB_CREDENTIALS` and :setting:`GITLAB_CREDENTIALS`.
+
+.. versionchanged:: 4.3.1
+
+   * The Celery configuration was changed to add ``memory`` queue. Please adjust your startup scripts and ``CELERY_TASK_ROUTES`` setting.
+
+.. versionchanged:: 4.3.2
+
+   * The ``post_update`` method of addons now takes extra ``skip_push`` parameter.
+
+.. seealso:: :ref:`generic-upgrade-instructions`
+
+Upgrade from 4.3 to 4.4
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Please follow :ref:`generic-upgrade-instructions` in order to perform update.
+
+Notable configuration or dependencies changes:
+
+* There is a change in :setting:`django:INSTALLED_APPS`, ``weblate.configuration`` has to be added there.
+* Django 3.1 is now required.
+* In case you are using MySQL or MariaDB, the minimal required versions have increased, see :ref:`mysql`.
+
+.. versionchanged:: 4.4.1
+
+   * :ref:`mono_gettext` now uses both ``msgid`` and ``msgctxt`` when present. This will change identification of translation strings in such files breaking links to Weblate extended data such as screenshots or review states. Please make sure you commit pending changes in such files prior upgrading and it is recommeded to force loading of affected component using :djadmin:`loadpo`.
+   * Increased minimal required version of translate-toolkit to address several file format issues.
+
+.. seealso:: :ref:`generic-upgrade-instructions`
+
+Upgrade from 4.4 to 4.5
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Please follow :ref:`generic-upgrade-instructions` in order to perform update.
+
+Notable configuration or dependencies changes:
+
+* The migration might take considerable time if you had big glossaries.
+* Glossaries are now stored as regular components.
+* The glossary API is removed, use regular translation API to access glossaries.
+* There is a change in :setting:`django:INSTALLED_APPS` - ``weblate.metrics`` should be added.
+
+.. versionchanged:: 4.5.1
+
+   * There is a new dependency on the `pyahocorasick` module.
 
 .. seealso:: :ref:`generic-upgrade-instructions`
 
@@ -211,45 +256,45 @@ The simplest approach for migration is to utilize Django JSON dumps. This works 
 .. code-block:: python
 
     DATABASES = {
-        'default': {
+        "default": {
             # Database engine
-            'ENGINE': 'django.db.backends.mysql',
+            "ENGINE": "django.db.backends.mysql",
             # Database name
-            'NAME': 'weblate',
+            "NAME": "weblate",
             # Database user
-            'USER': 'weblate',
+            "USER": "weblate",
             # Database password
-            'PASSWORD': 'password',
+            "PASSWORD": "password",
             # Set to empty string for localhost
-            'HOST': 'database.example.com',
+            "HOST": "database.example.com",
             # Set to empty string for default
-            'PORT': '',
+            "PORT": "",
             # Additional database options
-            'OPTIONS': {
+            "OPTIONS": {
                 # In case of using an older MySQL server, which has MyISAM as a default storage
                 # 'init_command': 'SET storage_engine=INNODB',
                 # Uncomment for MySQL older than 5.7:
                 # 'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
                 # If your server supports it, see the Unicode issues above
-               'charset': 'utf8mb4',
-               # Change connection timeout in case you get MySQL gone away error:
-               'connect_timeout': 28800,
-            }
+                "charset": "utf8mb4",
+                # Change connection timeout in case you get MySQL gone away error:
+                "connect_timeout": 28800,
+            },
         },
-        'postgresql': {
+        "postgresql": {
             # Database engine
-            'ENGINE': 'django.db.backends.postgresql',
+            "ENGINE": "django.db.backends.postgresql",
             # Database name
-            'NAME': 'weblate',
+            "NAME": "weblate",
             # Database user
-            'USER': 'weblate',
+            "USER": "weblate",
             # Database password
-            'PASSWORD': 'password',
+            "PASSWORD": "password",
             # Set to empty string for localhost
-            'HOST': 'database.example.com',
+            "HOST": "database.example.com",
             # Set to empty string for default
-            'PORT': '',
-        }
+            "PORT": "",
+        },
     }
 
 2. Run migrations and drop any data inserted into the tables:
@@ -273,7 +318,7 @@ Weblate should be now ready to run from the PostgreSQL database.
 
 .. _pgloader-migration:
 
-Migrating to PotsgreSQL using pgloader
+Migrating to PostgreSQL using pgloader
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The `pgloader`_ is a generic migration tool to migrate data to PostgreSQL. You can use it to migrate Weblate database.

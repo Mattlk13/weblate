@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -50,6 +50,11 @@ DATABASES = {
         "NAME": os.environ["POSTGRES_DATABASE"],
         # Database user.
         "USER": os.environ["POSTGRES_USER"],
+        # Name of role to alter to set parameters in PostgreSQL,
+        # use in case role name is different than user used for authentication.
+        "ALTER_ROLE": os.environ.get(
+            "POSTGRES_ALTER_ROLE", os.environ["POSTGRES_USER"]
+        ),
         # Database password.
         "PASSWORD": os.environ["POSTGRES_PASSWORD"],
         # Set to empty string for localhost.
@@ -169,7 +174,7 @@ STATICFILES_FINDERS = (
 
 # Make this unique, and don't share it with anybody.
 # You can generate it using weblate/examples/generate-secret-key
-with open("/app/data/secret", "r") as handle:
+with open("/app/data/secret") as handle:
     SECRET_KEY = handle.read()
 
 _TEMPLATE_LOADERS = [
@@ -207,6 +212,11 @@ GITHUB_TOKEN = os.environ.get("WEBLATE_GITHUB_TOKEN", None)
 GITLAB_USERNAME = os.environ.get("WEBLATE_GITLAB_USERNAME", None)
 GITLAB_TOKEN = os.environ.get("WEBLATE_GITLAB_TOKEN", None)
 
+# Pagure username and token for sending merge requests.
+# Please see the documentation for more details.
+PAGURE_USERNAME = os.environ.get("WEBLATE_PAGURE_USERNAME", None)
+PAGURE_TOKEN = os.environ.get("WEBLATE_PAGURE_TOKEN", None)
+
 # Authentication configuration
 AUTHENTICATION_BACKENDS = ()
 
@@ -240,7 +250,6 @@ SOCIAL_AUTH_FACEBOOK_KEY = os.environ.get("WEBLATE_SOCIAL_AUTH_FACEBOOK_KEY", ""
 SOCIAL_AUTH_FACEBOOK_SECRET = os.environ.get("WEBLATE_SOCIAL_AUTH_FACEBOOK_SECRET", "")
 SOCIAL_AUTH_FACEBOOK_SCOPE = ["email", "public_profile"]
 SOCIAL_AUTH_FACEBOOK_PROFILE_EXTRA_PARAMS = {"fields": "id,name,email"}
-SOCIAL_AUTH_FACEBOOK_API_VERSION = "3.1"
 
 if "WEBLATE_SOCIAL_AUTH_GOOGLE_OAUTH2_KEY" in os.environ:
     AUTHENTICATION_BACKENDS += ("social_core.backends.google.GoogleOAuth2",)
@@ -286,9 +295,9 @@ if "WEBLATE_SOCIAL_AUTH_AUTH0_AUTH_EXTRA_ARGUMENTS" in os.environ:
 if "WEBLATE_SAML_IDP_URL" in os.environ:
     AUTHENTICATION_BACKENDS += ("social_core.backends.saml.SAMLAuth",)
     # The keys are generated on container startup if missing
-    with open("/app/data/ssl/saml.crt", "r") as handle:
+    with open("/app/data/ssl/saml.crt") as handle:
         SOCIAL_AUTH_SAML_SP_PUBLIC_CERT = handle.read()
-    with open("/app/data/ssl/saml.key", "r") as handle:
+    with open("/app/data/ssl/saml.key") as handle:
         SOCIAL_AUTH_SAML_SP_PRIVATE_KEY = handle.read()
     # Identity Provider
     SOCIAL_AUTH_SAML_ENABLED_IDPS = {
@@ -454,12 +463,10 @@ SOCIAL_AUTH_STRATEGY = "weblate.accounts.strategy.WeblateStrategy"
 SOCIAL_AUTH_RAISE_EXCEPTIONS = True
 
 SOCIAL_AUTH_EMAIL_VALIDATION_FUNCTION = "weblate.accounts.pipeline.send_validation"
-SOCIAL_AUTH_EMAIL_VALIDATION_URL = "{0}/accounts/email-sent/".format(URL_PREFIX)
-SOCIAL_AUTH_LOGIN_ERROR_URL = "{0}/accounts/login/".format(URL_PREFIX)
-SOCIAL_AUTH_EMAIL_FORM_URL = "{0}/accounts/email/".format(URL_PREFIX)
-SOCIAL_AUTH_NEW_ASSOCIATION_REDIRECT_URL = "{0}/accounts/profile/#account".format(
-    URL_PREFIX
-)
+SOCIAL_AUTH_EMAIL_VALIDATION_URL = f"{URL_PREFIX}/accounts/email-sent/"
+SOCIAL_AUTH_LOGIN_ERROR_URL = f"{URL_PREFIX}/accounts/login/"
+SOCIAL_AUTH_EMAIL_FORM_URL = f"{URL_PREFIX}/accounts/email/"
+SOCIAL_AUTH_NEW_ASSOCIATION_REDIRECT_URL = f"{URL_PREFIX}/accounts/profile/#account"
 SOCIAL_AUTH_PROTECTED_USER_FIELDS = ("email",)
 SOCIAL_AUTH_SLUGIFY_USERNAMES = True
 SOCIAL_AUTH_SLUGIFY_FUNCTION = "weblate.accounts.pipeline.slugify_username"
@@ -510,7 +517,6 @@ MIDDLEWARE = [
     "weblate.middleware.ProxyMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
-    "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "weblate.accounts.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
@@ -556,9 +562,11 @@ INSTALLED_APPS = [
     "weblate.screenshots",
     "weblate.fonts",
     "weblate.accounts",
+    "weblate.configuration",
     "weblate.utils",
     "weblate.vcs",
     "weblate.wladmin",
+    "weblate.metrics",
     "weblate",
     # Optional: Git exporter
     "weblate.gitexport",
@@ -612,7 +620,7 @@ LOGGING = {
     "filters": {"require_debug_false": {"()": "django.utils.log.RequireDebugFalse"}},
     "formatters": {
         "syslog": {"format": "weblate[%(process)d]: %(levelname)s %(message)s"},
-        "simple": {"format": "%(levelname)s %(message)s"},
+        "simple": {"format": "[%(asctime)s: %(levelname)s/%(process)s] %(message)s"},
         "logfile": {"format": "%(asctime)s %(levelname)s %(message)s"},
         "django.server": {
             "()": "django.utils.log.ServerFormatter",
@@ -811,14 +819,15 @@ SECURE_REFERRER_POLICY = "same-origin"
 # SSL redirect URL exemption list
 SECURE_REDIRECT_EXEMPT = (r"healthz/$",)  # Allowing HTTP access to health check
 # Session cookie age (in seconds)
-SESSION_COOKIE_AGE = 1209600
+SESSION_COOKIE_AGE = 1000
+SESSION_COOKIE_AGE_AUTHENTICATED = 1209600
 # Increase allowed upload size
 DATA_UPLOAD_MAX_MEMORY_SIZE = 50000000
 
 # Apply session coookie settings to language cookie as ewll
 LANGUAGE_COOKIE_SECURE = SESSION_COOKIE_SECURE
 LANGUAGE_COOKIE_HTTPONLY = SESSION_COOKIE_HTTPONLY
-LANGUAGE_COOKIE_AGE = SESSION_COOKIE_AGE * 10
+LANGUAGE_COOKIE_AGE = SESSION_COOKIE_AGE_AUTHENTICATED * 10
 
 # Some security headers
 SECURE_BROWSER_XSS_FILTER = True
@@ -836,13 +845,13 @@ if WEBLATE_SECURE_PROXY_SSL_HEADER:
     SECURE_PROXY_SSL_HEADER = WEBLATE_SECURE_PROXY_SSL_HEADER
 
 # URL of login
-LOGIN_URL = "{0}/accounts/login/".format(URL_PREFIX)
+LOGIN_URL = f"{URL_PREFIX}/accounts/login/"
 
 # URL of logout
-LOGOUT_URL = "{0}/accounts/logout/".format(URL_PREFIX)
+LOGOUT_URL = f"{URL_PREFIX}/accounts/logout/"
 
 # Default location for login
-LOGIN_REDIRECT_URL = "{0}/".format(URL_PREFIX)
+LOGIN_REDIRECT_URL = f"{URL_PREFIX}/"
 
 # Anonymous user name
 ANONYMOUS_USER_NAME = "anonymous"
@@ -856,15 +865,22 @@ IP_PROXY_OFFSET = 0
 EMAIL_SEND_HTML = True
 
 # Subject of emails includes site title
-EMAIL_SUBJECT_PREFIX = "[{0}] ".format(SITE_TITLE)
+EMAIL_SUBJECT_PREFIX = f"[{SITE_TITLE}] "
 
 # Enable remote hooks
 ENABLE_HOOKS = True
+
+# Version hiding
+HIDE_VERSION = get_env_bool("WEBLATE_HIDE_VERSION", False)
 
 # Licensing filter
 if "WEBLATE_LICENSE_FILTER" in os.environ:
     LICENSE_FILTER = set(get_env_list("WEBLATE_LICENSE_FILTER"))
     LICENSE_FILTER.discard("")
+
+# Language filter
+if "WEBLATE_BASIC_LANGUAGES" in os.environ:
+    BASIC_LANGUAGES = set(get_env_list("WEBLATE_BASIC_LANGUAGES"))
 
 # By default the length of a given translation is limited to the length of
 # the source string * 10 characters. Set this option to False to allow longer
@@ -900,6 +916,8 @@ CHECK_LIST = [
     "weblate.checks.format.CFormatCheck",
     "weblate.checks.format.PerlFormatCheck",
     "weblate.checks.format.JavaScriptFormatCheck",
+    "weblate.checks.format.LuaFormatCheck",
+    "weblate.checks.format.SchemeFormatCheck",
     "weblate.checks.format.CSharpFormatCheck",
     "weblate.checks.format.JavaFormatCheck",
     "weblate.checks.format.JavaMessageFormatCheck",
@@ -935,6 +953,7 @@ CHECK_LIST = [
     "weblate.checks.source.MultipleFailingCheck",
     "weblate.checks.source.LongUntranslatedCheck",
     "weblate.checks.format.MultipleUnnamedFormatsCheck",
+    "weblate.checks.glossary.GlossaryCheck",
 ]
 modify_env_list(CHECK_LIST, "CHECK")
 
@@ -956,13 +975,16 @@ WEBLATE_ADDONS = [
     "weblate.addons.gettext.GettextCustomizeAddon",
     "weblate.addons.gettext.GettextAuthorComments",
     "weblate.addons.cleanup.CleanupAddon",
+    "weblate.addons.cleanup.RemoveBlankAddon",
     "weblate.addons.consistency.LangaugeConsistencyAddon",
     "weblate.addons.discovery.DiscoveryAddon",
+    "weblate.addons.autotranslate.AutoTranslateAddon",
     "weblate.addons.flags.SourceEditAddon",
     "weblate.addons.flags.TargetEditAddon",
     "weblate.addons.flags.SameEditAddon",
     "weblate.addons.flags.BulkEditAddon",
     "weblate.addons.generate.GenerateFileAddon",
+    "weblate.addons.generate.PseudolocaleAddon",
     "weblate.addons.json.JSONCustomizeAddon",
     "weblate.addons.properties.PropertiesSortAddon",
     "weblate.addons.git.GitSquashAddon",
@@ -971,7 +993,6 @@ WEBLATE_ADDONS = [
     "weblate.addons.resx.ResxUpdateAddon",
     "weblate.addons.yaml.YAMLCustomizeAddon",
     "weblate.addons.cdn.CDNJSAddon",
-    "weblate.addons.autotranslate.AutoTranslateAddon",
 ]
 modify_env_list(WEBLATE_ADDONS, "ADDONS")
 
@@ -1112,7 +1133,7 @@ SILENCED_SYSTEM_CHECKS.extend(get_env_list("WEBLATE_SILENCED_SYSTEM_CHECKS"))
 CELERY_TASK_ALWAYS_EAGER = get_env_bool("WEBLATE_CELERY_EAGER", False)
 CELERY_BROKER_URL = "{}://{}{}:{}/{}".format(
     REDIS_PROTO,
-    ":{}@".format(REDIS_PASSWORD) if REDIS_PASSWORD else "",
+    f":{REDIS_PASSWORD}@" if REDIS_PASSWORD else "",
     os.environ.get("REDIS_HOST", "cache"),
     os.environ.get("REDIS_PORT", "6379"),
     os.environ.get("REDIS_DB", "1"),
@@ -1135,6 +1156,7 @@ CELERY_TASK_ROUTES = {
     "weblate.utils.tasks.database_backup": {"queue": "backup"},
     "weblate.wladmin.tasks.backup": {"queue": "backup"},
     "weblate.wladmin.tasks.backup_service": {"queue": "backup"},
+    "weblate.memory.tasks.*": {"queue": "memory"},
 }
 
 # Database backup type
@@ -1142,6 +1164,9 @@ DATABASE_BACKUP = os.environ.get("WEBLATE_DATABASE_BACKUP", "plain")
 
 # Enable auto updating
 AUTO_UPDATE = get_env_bool("WEBLATE_AUTO_UPDATE", False)
+
+# Update languages on migration
+UPDATE_LANGUAGES = get_env_bool("WEBLATE_UPDATE_LANGUAGES", True)
 
 # Default access control
 DEFAULT_ACCESS_CONTROL = get_env_int("WEBLATE_DEFAULT_ACCESS_CONTROL", 0)
@@ -1161,12 +1186,21 @@ DEFAULT_COMMITER_EMAIL = os.environ.get(
 )
 DEFAULT_COMMITER_NAME = os.environ.get("WEBLATE_DEFAULT_COMMITER_NAME", "Weblate")
 
+DEFAULT_AUTO_WATCH = get_env_bool("WEBLATE_DEFAULT_AUTO_WATCH", True)
+
+DEFAULT_SHARED_TM = get_env_bool("WEBLATE_DEFAULT_SHARED_TM", True)
+
 # PGP commits signing
 WEBLATE_GPG_IDENTITY = os.environ.get("WEBLATE_GPG_IDENTITY", None)
 
 # Localize CDN addon
 LOCALIZE_CDN_URL = os.environ.get("WEBLATE_LOCALIZE_CDN_URL", None)
 LOCALIZE_CDN_PATH = os.environ.get("WEBLATE_LOCALIZE_CDN_PATH", None)
+
+# Integration links
+GET_HELP_URL = os.environ.get("WEBLATE_GET_HELP_URL", None)
+STATUS_URL = os.environ.get("WEBLATE_STATUS_URL", None)
+LEGAL_URL = os.environ.get("WEBLATE_LEGAL_URL", None)
 
 # Third party services integration
 MATOMO_SITE_ID = os.environ.get("WEBLATE_MATOMO_SITE_ID", None)

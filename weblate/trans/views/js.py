@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -17,7 +17,6 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-from celery.result import AsyncResult
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.http import Http404, HttpResponse, HttpResponseBadRequest, JsonResponse
@@ -32,7 +31,6 @@ from weblate.machinery import MACHINE_TRANSLATION_SERVICES
 from weblate.machinery.base import MachineTranslationError
 from weblate.trans.models import Change, Unit
 from weblate.trans.util import sort_unicode
-from weblate.utils.celery import get_task_progress, is_task_ready
 from weblate.utils.errors import report_error
 from weblate.utils.views import get_component, get_project, get_translation
 
@@ -66,9 +64,10 @@ def handle_machinery(request, service, unit, search=None):
             response["responseDetails"] = str(exc)
         except Exception as error:
             report_error()
-            response["responseDetails"] = "{0}: {1}".format(
-                error.__class__.__name__, str(error)
-            )
+            response["responseDetails"] = f"{error.__class__.__name__}: {error}"
+
+    if response["responseStatus"] != 200:
+        unit.translation.log_info("machinery failed: %s", response["responseDetails"])
 
     return JsonResponse(data=response)
 
@@ -97,21 +96,28 @@ def memory(request, unit_id):
 def get_unit_translations(request, unit_id):
     """Return unit's other translations."""
     unit = get_object_or_404(Unit, pk=int(unit_id))
-    request.user.check_access_component(unit.translation.component)
+    user = request.user
+    user.check_access_component(unit.translation.component)
 
     return render(
         request,
         "js/translations.html",
         {
             "units": sort_unicode(
-                unit.source_unit.unit_set.exclude(pk=unit.pk).prefetch(),
-                lambda unit: str(unit.translation.language),
+                unit.source_unit.unit_set.exclude(pk=unit.pk)
+                .prefetch()
+                .prefetch_full(),
+                lambda unit: "{}-{}".format(
+                    user.profile.get_translation_order(unit.translation),
+                    unit.translation.language,
+                ),
             )
         },
     )
 
 
 @require_POST
+@login_required
 def ignore_check(request, check_id):
     obj = get_object_or_404(Check, pk=int(check_id))
 
@@ -125,6 +131,7 @@ def ignore_check(request, check_id):
 
 
 @require_POST
+@login_required
 def ignore_check_source(request, check_id):
     obj = get_object_or_404(Check, pk=int(check_id))
     unit = obj.unit.source_unit
@@ -146,9 +153,11 @@ def ignore_check_source(request, check_id):
     return HttpResponse("ok")
 
 
-def git_status_shared(request, obj, changes, repositories):
+def git_status_shared(request, obj, repositories):
     if not request.user.has_perm("meta:vcs.status", obj):
         raise PermissionDenied()
+
+    changes = obj.change_set.filter(action__in=Change.ACTIONS_REPOSITORY).order()[:10]
 
     return render(
         request,
@@ -164,19 +173,14 @@ def git_status_shared(request, obj, changes, repositories):
     )
 
 
+@login_required
 def git_status_project(request, project):
     obj = get_project(request, project)
 
-    return git_status_shared(
-        request,
-        obj,
-        Change.objects.filter(
-            project=obj, action__in=Change.ACTIONS_REPOSITORY
-        ).order()[:10],
-        obj.all_repo_components,
-    )
+    return git_status_shared(request, obj, obj.all_repo_components)
 
 
+@login_required
 def git_status_component(request, project, component):
     obj = get_component(request, project, component)
 
@@ -184,16 +188,10 @@ def git_status_component(request, project, component):
     if target.is_repo_link:
         target = target.linked_component
 
-    return git_status_shared(
-        request,
-        obj,
-        Change.objects.filter(
-            action__in=Change.ACTIONS_REPOSITORY, component=target
-        ).order()[:10],
-        [obj],
-    )
+    return git_status_shared(request, obj, [obj])
 
 
+@login_required
 def git_status_translation(request, project, component, lang):
     obj = get_translation(request, project, component, lang)
 
@@ -201,27 +199,7 @@ def git_status_translation(request, project, component, lang):
     if target.is_repo_link:
         target = target.linked_component
 
-    return git_status_shared(
-        request,
-        obj,
-        Change.objects.filter(
-            action__in=Change.ACTIONS_REPOSITORY, component=target
-        ).order()[:10],
-        [obj.component],
-    )
-
-
-@login_required
-def task_progress(request, task_id):
-    task = AsyncResult(str(task_id))
-    result = task.result
-    return JsonResponse(
-        {
-            "completed": is_task_ready(task),
-            "progress": get_task_progress(task),
-            "result": str(result) if isinstance(result, Exception) else result,
-        }
-    )
+    return git_status_shared(request, obj, [obj.component])
 
 
 @cache_control(max_age=3600)

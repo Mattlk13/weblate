@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -20,9 +20,9 @@
 import requests
 from django.core.cache import cache
 
-from weblate import USER_AGENT
 from weblate.logger import LOGGER
 from weblate.utils.errors import report_error
+from weblate.utils.version import USER_AGENT
 
 
 def request(method, url, headers=None, **kwargs):

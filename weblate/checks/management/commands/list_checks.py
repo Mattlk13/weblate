@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -50,7 +50,7 @@ class Command(BaseCommand):
             if not is_format and lines:
                 self.flush_lines(lines)
             # Output immediately
-            self.stdout.write(".. _{}:\n".format(check.doc_id))
+            self.stdout.write(f".. _{check.doc_id}:\n")
             if not lines:
                 lines.append("\n")
             lines.append(str(check.name))
@@ -59,7 +59,7 @@ class Command(BaseCommand):
             else:
                 lines.append("~" * len(check.name))
             lines.append("\n")
-            lines.append("\n".join(wrap("*{}*".format(check.description), 79)))
+            lines.append("\n".join(wrap(f"*{check.description}*", 79)))
             lines.append("\n")
 
             if not is_format:

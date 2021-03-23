@@ -52,27 +52,19 @@
     </td>
     <td class="number">
       {% if user_can_update_translation %}
-        <div class="btn-group">
+        <div class="btn-group pull-right flip">
           <a href="{{ object.get_update_url }}" class="link-post btn btn-primary" title="{% trans "Update with changes from the remote repository" %}">{% trans "Update" %}</a>
           <button type="button" class="btn btn-primary dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
             <span class="caret"></span>
             <span class="sr-only">Toggle Dropdown</span>
           </button>
-          <ul class="dropdown-menu">
+          <ul class="dropdown-menu dropdown-menu-right">
             <li>
               <a href="{{ object.get_update_url }}?method=merge" class="link-post" title="{% trans "Pull changes from the remote repository" %}">{% trans "Pull" %}</a>
             </li>
             <li>
               <a href="{{ object.get_update_url }}?method=rebase" class="link-post" title="{% trans "Rebase Weblate changes onto the remote repository" %}">{% trans "Rebase" %}</a>
             </li>
-            {% if user_can_reset_translation %}
-            <li>
-              <a href="{{ object.get_reset_url }}" class="link-post" title="{% trans "Reset all changes in the Weblate repository" %}">{% trans "Reset" %}</a>
-            </li>
-            <li>
-              <a href="{{ object.get_cleanup_url }}" class="link-post" title="{% trans "Cleanup all untracked files in the Weblate repository" %}">{% trans "Cleanup" %}</a>
-            </li>
-            {% endif %}
           </ul>
         </div>
       {% endif %}
@@ -98,6 +90,34 @@
       {% endif %}
     </td>
   </tr>
+  {% endif %}
+  {% if user_can_reset_translation %}
+    <tr>
+      <th class="number">
+      </th>
+      <td>
+        {% trans "Resetting removes all changes in Weblate so that the repository matches upstream. Use with caution." %}
+      </td>
+      <td class="number">
+        <div class="btn-group pull-right flip">
+          <button type="button" class="btn btn-danger dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+            {% trans "Maintenance" %}
+            <span class="caret"></span>
+          </button>
+          <ul class="dropdown-menu dropdown-menu-right">
+            <li>
+              <a href="{{ object.get_reset_url }}" class="link-post" title="{% trans "Reset all changes in the Weblate repository" %}">{% trans "Reset" %}</a>
+            </li>
+            <li>
+              <a href="{{ object.get_cleanup_url }}" class="link-post" title="{% trans "Cleanup all untracked files in the Weblate repository" %}">{% trans "Cleanup" %}</a>
+            </li>
+            <li>
+              <a href="{{ object.get_file_sync_url }}" class="link-post" title="{% trans "Force writing all translations to the Weblate repository" %}">{% trans "Force synchronization" %}</a>
+            </li>
+          </ul>
+        </div>
+      </td>
+    </tr>
   {% endif %}
 </table>
 </div>

@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -71,7 +71,7 @@ def render_template(template, **kwargs):
     if isinstance(translation, Translation):
         translation.stats.ensure_basic()
         kwargs["language_code"] = translation.language_code
-        kwargs["language_name"] = translation.language.name
+        kwargs["language_name"] = translation.language.get_name()
         kwargs["stats"] = translation.stats.get_data()
         kwargs["url"] = get_site_url(translation.get_absolute_url())
         kwargs["filename"] = translation.filename

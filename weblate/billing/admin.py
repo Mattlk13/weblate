@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -39,7 +39,7 @@ class PlanAdmin(WeblateModelAdmin):
 
 
 def format_user(obj):
-    return "{}: {} <{}>".format(obj.username, obj.full_name, obj.email)
+    return f"{obj.username}: {obj.full_name} <{obj.email}>"
 
 
 class BillingAdmin(WeblateModelAdmin):
@@ -63,7 +63,7 @@ class BillingAdmin(WeblateModelAdmin):
         "last_invoice",
     )
     list_filter = ("plan", "state", "paid", "in_limits")
-    search_fields = ("projects__name",)
+    search_fields = ("projects__name", "owners__email")
     filter_horizontal = ("projects", "owners")
 
     def get_queryset(self, request):

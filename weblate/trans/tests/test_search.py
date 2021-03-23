@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -16,20 +16,19 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-
 """Test for search views."""
-
 
 import re
 
-from django.conf import settings
 from django.http import QueryDict
 from django.test.utils import override_settings
 from django.urls import reverse
 
+from weblate.trans.models import Component
 from weblate.trans.tests.test_views import ViewTestCase
+from weblate.utils.db import using_postgresql
 from weblate.utils.ratelimit import reset_rate_limit
-from weblate.utils.state import STATE_FUZZY, STATE_TRANSLATED
+from weblate.utils.state import STATE_FUZZY, STATE_READONLY, STATE_TRANSLATED
 
 
 class SearchViewTest(ViewTestCase):
@@ -39,7 +38,7 @@ class SearchViewTest(ViewTestCase):
         # well inside a transaction, so we avoid using transactions for
         # tests. Otherwise we end up with no matches for the query.
         # See https://dev.mysql.com/doc/refman/5.6/en/innodb-fulltext-index.html
-        if settings.DATABASES["default"]["ENGINE"] == "django.db.backends.mysql":
+        if not using_postgresql():
             return False
         return super()._databases_support_transactions()
 
@@ -246,8 +245,8 @@ class ReplaceTest(ViewTestCase):
         self.do_replace_test(reverse("replace", kwargs=self.kw_component))
 
 
-class BulkStateTest(ViewTestCase):
-    """Test for mass state change functionality."""
+class BulkEditTest(ViewTestCase):
+    """Test for buld edit functionality."""
 
     def setUp(self):
         super().setUp()
@@ -255,7 +254,7 @@ class BulkStateTest(ViewTestCase):
         self.unit = self.get_unit()
         self.make_manager()
 
-    def do_mass_state_test(self, url, confirm=True):
+    def do_bulk_edit_test(self, url):
         response = self.client.post(
             url, {"q": "state:needs-editing", "state": STATE_TRANSLATED}, follow=True
         )
@@ -272,14 +271,14 @@ class BulkStateTest(ViewTestCase):
         unit = self.get_unit()
         self.assertEqual(unit.state, STATE_FUZZY)
 
-    def test_mass_state(self):
-        self.do_mass_state_test(reverse("bulk-edit", kwargs=self.kw_translation))
+    def test_bulk_edit(self):
+        self.do_bulk_edit_test(reverse("bulk-edit", kwargs=self.kw_translation))
 
-    def test_mass_state_project(self):
-        self.do_mass_state_test(reverse("bulk-edit", kwargs=self.kw_project))
+    def test_bulk_edit_project(self):
+        self.do_bulk_edit_test(reverse("bulk-edit", kwargs=self.kw_project))
 
-    def test_mass_state_component(self):
-        self.do_mass_state_test(reverse("bulk-edit", kwargs=self.kw_component))
+    def test_bulk_edit_component(self):
+        self.do_bulk_edit_test(reverse("bulk-edit", kwargs=self.kw_component))
 
     def test_bulk_flags(self):
         response = self.client.post(
@@ -327,13 +326,11 @@ class BulkStateTest(ViewTestCase):
         self.assertContains(response, "Bulk edit completed, 1 string was updated.")
         unit = self.get_unit()
         self.assertTrue(label in unit.all_labels)
-        self.assertEqual(
-            getattr(unit.translation.stats, "label:{}".format(label.name)), 1
-        )
+        self.assertEqual(getattr(unit.translation.stats, f"label:{label.name}"), 1)
         # Clear local outdated cache
         unit.source_unit.translation.stats.clear()
         self.assertEqual(
-            getattr(unit.source_unit.translation.stats, "label:{}".format(label.name)),
+            getattr(unit.source_unit.translation.stats, f"label:{label.name}"),
             1,
         )
         response = self.client.post(
@@ -344,12 +341,50 @@ class BulkStateTest(ViewTestCase):
         self.assertContains(response, "Bulk edit completed, 1 string was updated.")
         unit = self.get_unit()
         self.assertFalse(label in unit.labels.all())
-        self.assertEqual(
-            getattr(unit.translation.stats, "label:{}".format(label.name)), 0
-        )
+        self.assertEqual(getattr(unit.translation.stats, f"label:{label.name}"), 0)
         # Clear local outdated cache
         unit.source_unit.translation.stats.clear()
         self.assertEqual(
-            getattr(unit.source_unit.translation.stats, "label:{}".format(label.name)),
+            getattr(unit.source_unit.translation.stats, f"label:{label.name}"),
             0,
         )
+
+    def test_source_state(self):
+        mono = Component.objects.create(
+            name="Test2",
+            slug="test2",
+            project=self.project,
+            repo="weblate://test/test",
+            file_format="json",
+            filemask="json-mono/*.json",
+            template="json-mono/en.json",
+        )
+        # Translate single unit
+        translation = mono.translation_set.get(language_code="cs")
+        translation.unit_set.get(context="hello").translate(
+            self.user, "Ahoj světe", STATE_TRANSLATED
+        )
+        self.assertEqual(translation.unit_set.filter(state=STATE_READONLY).count(), 0)
+        self.assertEqual(translation.unit_set.filter(state=STATE_TRANSLATED).count(), 1)
+
+        url = reverse(
+            "bulk-edit", kwargs={"project": self.project.slug, "component": mono.slug}
+        )
+
+        # Mark all source strings as needing edit and that should turn all
+        # translated strings read-only
+        response = self.client.post(
+            url, {"q": "language:en", "state": STATE_FUZZY}, follow=True
+        )
+        self.assertContains(response, "Bulk edit completed, 4 strings were updated.")
+        self.assertEqual(translation.unit_set.filter(state=STATE_READONLY).count(), 4)
+        self.assertEqual(translation.unit_set.filter(state=STATE_TRANSLATED).count(), 0)
+
+        # Mark all source strings as needing edit and that should turn all
+        # translated strings back to translated
+        response = self.client.post(
+            url, {"q": "language:en", "state": STATE_TRANSLATED}, follow=True
+        )
+        self.assertContains(response, "Bulk edit completed, 4 strings were updated.")
+        self.assertEqual(translation.unit_set.filter(state=STATE_READONLY).count(), 0)
+        self.assertEqual(translation.unit_set.filter(state=STATE_TRANSLATED).count(), 1)

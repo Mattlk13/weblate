@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -51,10 +51,10 @@ def reset_rate_limit(scope, request=None, address=None, user=None):
 
 
 def get_rate_setting(scope, suffix):
-    key = "RATELIMIT_{}_{}".format(scope.upper(), suffix)
+    key = f"RATELIMIT_{scope.upper()}_{suffix}"
     if hasattr(settings, key):
         return getattr(settings, key)
-    return getattr(settings, "RATELIMIT_{}".format(suffix))
+    return getattr(settings, f"RATELIMIT_{suffix}")
 
 
 def revert_rate_limit(scope, request):
@@ -105,7 +105,9 @@ def session_ratelimit_post(scope):
                     logout(request)
                 messages.error(
                     request,
-                    render_to_string("ratelimit.html", {"do_logout": do_logout}),
+                    render_to_string(
+                        "ratelimit.html", {"do_logout": do_logout, "user": request.user}
+                    ),
                 )
                 return redirect("login")
             return function(request, *args, **kwargs)

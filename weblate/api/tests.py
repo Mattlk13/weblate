@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -19,6 +19,7 @@
 
 from copy import copy
 from datetime import timedelta
+from io import BytesIO
 
 from django.core.files import File
 from django.urls import reverse
@@ -28,7 +29,6 @@ from weblate_language_data.languages import LANGUAGES
 
 from weblate.accounts.models import Subscription
 from weblate.auth.models import Group, Role, User
-from weblate.glossary.models import Glossary
 from weblate.lang.models import Language
 from weblate.screenshots.models import Screenshot
 from weblate.trans.models import (
@@ -738,8 +738,9 @@ class RoleAPITest(APIBaseTest):
         self.assertEqual(response.data["count"], 13)
 
     def test_get_role(self):
-        response = self.client.get(reverse("api:role-detail", kwargs={"id": 1}))
-        self.assertEqual(response.data["name"], "Add suggestion")
+        role = Role.objects.get(name="Access repository")
+        response = self.client.get(reverse("api:role-detail", kwargs={"id": role.pk}))
+        self.assertEqual(response.data["name"], role.name)
 
     def test_create(self):
         self.do_request("api:role-list", method="post", code=403)
@@ -822,31 +823,33 @@ class RoleAPITest(APIBaseTest):
         )
 
     def test_patch(self):
+        role = Role.objects.get(name="Access repository")
+        self.assertEqual(role.permissions.count(), 2)
         self.do_request(
             "api:role-detail",
-            kwargs={"id": Role.objects.order_by("id").all()[0].pk},
+            kwargs={"id": role.pk},
             method="patch",
             code=403,
         )
         self.do_request(
             "api:role-detail",
-            kwargs={"id": Role.objects.order_by("id").all()[0].pk},
+            kwargs={"id": role.pk},
             method="patch",
             superuser=True,
             code=200,
             request={"name": "New Role"},
         )
-        self.assertEqual(Role.objects.order_by("id").all()[0].name, "New Role")
+        self.assertEqual(Role.objects.get(pk=role.pk).name, "New Role")
         self.do_request(
             "api:role-detail",
-            kwargs={"id": Role.objects.order_by("id").all()[0].pk},
+            kwargs={"id": role.pk},
             method="patch",
             superuser=True,
             code=200,
             format="json",
             request={"permissions": ["comment.add"]},
         )
-        self.assertEqual(Role.objects.order_by("id").all()[0].permissions.count(), 2)
+        self.assertEqual(Role.objects.get(pk=role.pk).permissions.count(), 3)
 
 
 class ProjectAPITest(APIBaseTest):
@@ -913,11 +916,11 @@ class ProjectAPITest(APIBaseTest):
 
     def test_components(self):
         request = self.do_request("api:project-components", self.project_kwargs)
-        self.assertEqual(request.data["count"], 1)
+        self.assertEqual(request.data["count"], 2)
 
     def test_changes(self):
         request = self.do_request("api:project-changes", self.project_kwargs)
-        self.assertEqual(request.data["count"], 14)
+        self.assertEqual(request.data["count"], 20)
 
     def test_statistics(self):
         request = self.do_request("api:project-statistics", self.project_kwargs)
@@ -1028,7 +1031,7 @@ class ProjectAPITest(APIBaseTest):
             },
         )
         self.assertEqual(Project.objects.count(), 1)
-        self.assertEqual(Component.objects.count(), 2)
+        self.assertEqual(Component.objects.count(), 3)
         self.assertEqual(response.data["source_language"]["code"], "ru")
         self.assertEqual(
             Component.objects.get(slug="api-project").source_language.code, "ru"
@@ -1070,7 +1073,7 @@ class ProjectAPITest(APIBaseTest):
             request=payload,
         )
         self.assertEqual(Project.objects.count(), 1)
-        self.assertEqual(Component.objects.count(), 2)
+        self.assertEqual(Component.objects.count(), 3)
         self.assertEqual(response.data["source_language"]["code"], "ru")
         self.assertEqual(
             Component.objects.get(slug="api-project").source_language.code, "ru"
@@ -1107,12 +1110,35 @@ class ProjectAPITest(APIBaseTest):
                 "new_lang": "none",
             },
         )
-        self.assertEqual(Component.objects.count(), 2)
+        self.assertEqual(Component.objects.count(), 3)
+        component = Component.objects.get(slug="api-project", project__slug="test")
         self.assertEqual(
-            Component.objects.get(slug="api-project", project__slug="test").push,
+            component.push,
             "https://username:password@github.com/example/push.git",
         )
+        self.assertFalse(component.manage_units)
+        self.assertFalse(response.data["manage_units"])
         self.assertEqual(response.data["push"], "https://github.com/example/push.git")
+        response = self.do_request(
+            "api:project-components",
+            self.project_kwargs,
+            method="post",
+            code=201,
+            superuser=True,
+            request={
+                "name": "Other",
+                "slug": "other",
+                "repo": self.format_local_path(self.git_repo_path),
+                "filemask": "android/values-*/strings.xml",
+                "file_format": "aresource",
+                "template": "android/values/strings.xml",
+                "new_lang": "none",
+            },
+        )
+        self.assertEqual(Component.objects.count(), 4)
+        component = Component.objects.get(slug="other", project__slug="test")
+        self.assertTrue(component.manage_units)
+        self.assertTrue(response.data["manage_units"])
 
     def test_create_component_no_format(self):
         repo_url = self.format_local_path(self.git_repo_path)
@@ -1149,7 +1175,7 @@ class ProjectAPITest(APIBaseTest):
                 "new_lang": "none",
             },
         )
-        self.assertEqual(Component.objects.count(), 2)
+        self.assertEqual(Component.objects.count(), 3)
         self.assertEqual(
             Component.objects.get(slug="api-project", project__slug="test").repo,
             repo_url,
@@ -1174,7 +1200,7 @@ class ProjectAPITest(APIBaseTest):
                 "new_lang": "none",
             },
         )
-        self.assertEqual(Component.objects.count(), 2)
+        self.assertEqual(Component.objects.count(), 3)
         self.assertEqual(
             Component.objects.get(slug="api-project", project__slug="test").repo,
             repo_url,
@@ -1197,7 +1223,7 @@ class ProjectAPITest(APIBaseTest):
                 "new_lang": "none",
             },
         )
-        self.assertEqual(Component.objects.count(), 1)
+        self.assertEqual(Component.objects.count(), 2)
         self.assertIn("filemask", response.data)
 
     def test_create_component_local(self):
@@ -1220,7 +1246,7 @@ class ProjectAPITest(APIBaseTest):
             },
         )
         self.assertEqual(response.data["repo"], "local:")
-        self.assertEqual(Component.objects.count(), 2)
+        self.assertEqual(Component.objects.count(), 3)
 
     def test_patch(self):
         self.do_request(
@@ -1254,7 +1280,25 @@ class ProjectAPITest(APIBaseTest):
                 },
             )
         self.assertEqual(response.data["repo"], "local:")
-        self.assertEqual(Component.objects.count(), 2)
+        self.assertEqual(Component.objects.count(), 3)
+
+    def test_create_component_docfile_json(self):
+        with open(TEST_DOC, "rb") as handle:
+            self.do_request(
+                "api:project-components",
+                self.project_kwargs,
+                method="post",
+                code=400,
+                superuser=True,
+                format="json",
+                request={
+                    "docfile": handle.read(),
+                    "name": "Local project",
+                    "slug": "local-project",
+                    "file_format": "html",
+                    "new_lang": "add",
+                },
+            )
 
     def test_create_component_docfile_language(self):
         with open(TEST_DOC, "rb") as handle:
@@ -1275,7 +1319,7 @@ class ProjectAPITest(APIBaseTest):
             )
         self.assertEqual(response.data["repo"], "local:")
         self.assertEqual(response.data["template"], "local-project/cs.html")
-        self.assertEqual(Component.objects.count(), 2)
+        self.assertEqual(Component.objects.count(), 3)
 
     def test_create_component_zipfile(self):
         with open(TEST_ZIP, "rb") as handle:
@@ -1297,7 +1341,7 @@ class ProjectAPITest(APIBaseTest):
                 },
             )
         self.assertEqual(response.data["repo"], "local:")
-        self.assertEqual(Component.objects.count(), 2)
+        self.assertEqual(Component.objects.count(), 3)
 
     def test_create_component_zipfile_bad_params(self):
         with open(TEST_ZIP, "rb") as handle:
@@ -1334,294 +1378,110 @@ class ProjectAPITest(APIBaseTest):
                 },
             )
 
-
-class GlossaryAPITest(APIBaseTest):
-    def test_list_glossary(self):
-        response = self.client.get(reverse("api:glossary-list"))
-        self.assertEqual(response.data["count"], 1)
-        self.assertEqual(response.data["results"][0]["name"], "Test")
-
-    def test_get_glossary(self):
-        response = self.client.get(
-            reverse("api:glossary-detail", kwargs={"id": Glossary.objects.all()[0].id})
-        )
-        self.assertEqual(response.data["name"], "Test")
-
-    def test_delete(self):
-        self.do_request(
-            "api:glossary-detail",
-            kwargs={"id": Glossary.objects.all()[0].id},
-            method="delete",
-            code=403,
-        )
-        self.do_request(
-            "api:glossary-detail",
-            kwargs={"id": Glossary.objects.all()[0].id},
-            method="delete",
-            superuser=True,
-            code=204,
-        )
-        self.assertEqual(Glossary.objects.count(), 0)
-
-    def test_put(self):
-        self.do_request(
-            "api:glossary-detail",
-            kwargs={"id": Glossary.objects.all()[0].id},
-            method="put",
-            code=403,
-        )
-        self.do_request(
-            "api:glossary-detail",
-            kwargs={"id": Glossary.objects.all()[0].id},
-            method="put",
-            superuser=True,
-            code=200,
-            format="json",
-            request={"color": "gray", "name": "Test"},
-        )
-        self.assertEqual(Glossary.objects.all()[0].color, "gray")
-        # Edit source_language
-        self.do_request(
-            "api:glossary-detail",
-            kwargs={"id": Glossary.objects.all()[0].id},
-            method="put",
-            superuser=True,
-            code=200,
-            format="json",
-            request={
-                "source_language": {"code": "ru"},
-                "color": "gray",
-                "name": "Test",
-            },
-        )
-        self.assertEqual(Glossary.objects.all()[0].source_language.code, "ru")
-
-    def test_patch(self):
-        self.do_request(
-            "api:glossary-detail",
-            kwargs={"id": Glossary.objects.all()[0].id},
-            method="patch",
-            code=403,
-        )
-        self.do_request(
-            "api:glossary-detail",
-            kwargs={"id": Glossary.objects.all()[0].id},
-            method="patch",
-            superuser=True,
-            code=200,
-            request={"color": "gray"},
-        )
-        self.assertEqual(Glossary.objects.all()[0].color, "gray")
-        # Edit source_language
-        self.do_request(
-            "api:glossary-detail",
-            kwargs={"id": Glossary.objects.all()[0].id},
-            method="patch",
-            superuser=True,
-            code=200,
-            format="json",
-            request={"source_language": {"code": "ru"}},
-        )
-        self.assertEqual(Glossary.objects.all()[0].source_language.code, "ru")
-
-    def test_associated_projects(self):
-        self.authenticate(True)
-        project = self.do_request(
-            "api:project-list",
+    def test_create_component_enforced(self):
+        response = self.do_request(
+            "api:project-components",
+            self.project_kwargs,
             method="post",
-            code=201,
+            code=400,
             superuser=True,
             request={
-                "name": "API project",
-                "slug": "api-project",
-                "web": "https://weblate.org/",
+                "name": "Local project",
+                "slug": "local-project",
+                "repo": "local:",
+                "vcs": "local",
+                "filemask": "*.strings",
+                "template": "en.strings",
+                "file_format": "strings-utf8",
+                "push": "https://username:password@github.com/example/push.git",
+                "new_lang": "none",
+                "enforced_checks": "",
             },
-        ).data
-        response = self.client.post(
-            reverse(
-                "api:glossary-projects",
-                kwargs={"id": Glossary.objects.order_by("id").all()[0].id},
-            ),
-            {"project_slug": project["slug"]},
         )
-        self.assertEqual(response.status_code, 201)
-        response = self.client.get(
-            reverse(
-                "api:glossary-projects",
-                kwargs={"id": Glossary.objects.order_by("id").all()[0].id},
-            )
-        )
-        self.assertEqual(response.data["count"], 1)
-        self.assertEqual(response.data["results"][0]["slug"], project["slug"])
-
-    def test_projects_delete(self):
-        self.authenticate(True)
-        project = self.do_request(
-            "api:project-list",
+        response = self.do_request(
+            "api:project-components",
+            self.project_kwargs,
             method="post",
-            code=201,
+            code=400,
             superuser=True,
             request={
-                "name": "API project",
-                "slug": "api-project",
-                "web": "https://weblate.org/",
+                "name": "Local project",
+                "slug": "local-project",
+                "repo": "local:",
+                "vcs": "local",
+                "filemask": "*.strings",
+                "template": "en.strings",
+                "file_format": "strings-utf8",
+                "push": "https://username:password@github.com/example/push.git",
+                "new_lang": "none",
+                "enforced_checks": '""',
             },
-        ).data
-        self.client.post(
-            reverse(
-                "api:glossary-projects",
-                kwargs={"id": Glossary.objects.order_by("id").all()[0].id},
-            ),
-            {"project_slug": project["slug"]},
-        )
-        response = self.client.delete(
-            reverse(
-                "api:glossary-delete-projects",
-                kwargs={
-                    "id": Glossary.objects.order_by("id").all()[0].id,
-                    "project_slug": -1,
-                },
-            ),
-        )
-        self.assertEqual(response.status_code, 404)
-        response = self.client.delete(
-            reverse(
-                "api:glossary-delete-projects",
-                kwargs={
-                    "id": Glossary.objects.order_by("id").all()[0].id,
-                    "project_slug": project["slug"],
-                },
-            ),
-        )
-        self.assertEqual(response.status_code, 204)
-        self.assertEqual(len(Glossary.objects.order_by("id").all()[0].links.all()), 0)
-
-    def test_post_terms(self):
-        self.do_request(
-            "api:glossary-terms",
-            kwargs={"id": Glossary.objects.order_by("id").all()[0].id},
-            method="post",
-            superuser=True,
-            code=201,
-            format="json",
-            request={"language": {"code": "cs"}, "source": "test", "target": "test"},
-        )
-        self.assertEqual(Glossary.objects.order_by("id").all()[0].term_set.count(), 1)
-
-    def test_list_terms(self):
-        self.do_request(
-            "api:glossary-terms",
-            kwargs={"id": Glossary.objects.order_by("id").all()[0].id},
-            method="post",
-            superuser=True,
-            code=201,
-            format="json",
-            request={"language": {"code": "cs"}, "source": "test", "target": "test"},
         )
         response = self.do_request(
-            "api:glossary-terms",
-            kwargs={"id": Glossary.objects.order_by("id").all()[0].id},
-            method="get",
-            superuser=True,
-            code=200,
-        )
-        self.assertEqual(response.data["count"], 1)
-
-    def test_get_terms(self):
-        term = self.do_request(
-            "api:glossary-terms",
-            kwargs={"id": Glossary.objects.order_by("id").all()[0].id},
+            "api:project-components",
+            self.project_kwargs,
             method="post",
+            code=400,
             superuser=True,
-            code=201,
             format="json",
-            request={"language": {"code": "cs"}, "source": "test", "target": "test"},
-        ).data
-        self.do_request(
-            "api:glossary-terms-details",
-            kwargs={"id": Glossary.objects.order_by("id").all()[0].id, "term_id": 1000},
-            method="get",
-            code=404,
-        )
-        self.do_request(
-            "api:glossary-terms-details",
-            kwargs={
-                "id": Glossary.objects.order_by("id").all()[0].id,
-                "term_id": term["id"],
+            request={
+                "name": "Local project",
+                "slug": "local-project",
+                "repo": "local:",
+                "vcs": "local",
+                "filemask": "*.strings",
+                "template": "en.strings",
+                "file_format": "strings-utf8",
+                "push": "https://username:password@github.com/example/push.git",
+                "new_lang": "none",
+                "enforced_checks": "",
             },
-            method="get",
-            code=200,
         )
-
-    def test_put_terms(self):
-        term = self.do_request(
-            "api:glossary-terms",
-            kwargs={"id": Glossary.objects.order_by("id").all()[0].id},
-            method="post",
-            superuser=True,
-            code=201,
-            format="json",
-            request={"language": {"code": "cs"}, "source": "test", "target": "test"},
-        ).data
         response = self.do_request(
-            "api:glossary-terms-details",
-            kwargs={
-                "id": Glossary.objects.order_by("id").all()[0].id,
-                "term_id": term["id"],
-            },
-            method="put",
-            superuser=True,
-            code=200,
-            format="json",
-            request={"language": {"code": "cs"}, "source": "test", "target": "test2"},
-        )
-        self.assertEqual(response.data["target"], "test2")
-
-    def test_patch_terms(self):
-        term = self.do_request(
-            "api:glossary-terms",
-            kwargs={"id": Glossary.objects.order_by("id").all()[0].id},
+            "api:project-components",
+            self.project_kwargs,
             method="post",
+            code=400,
             superuser=True,
-            code=201,
             format="json",
-            request={"language": {"code": "cs"}, "source": "test", "target": "test"},
-        ).data
+            request={
+                "name": "Local project",
+                "slug": "local-project",
+                "repo": "local:",
+                "vcs": "local",
+                "filemask": "*.strings",
+                "template": "en.strings",
+                "file_format": "strings-utf8",
+                "push": "https://username:password@github.com/example/push.git",
+                "new_lang": "none",
+                "enforced_checks": ["xxx"],
+            },
+        )
         response = self.do_request(
-            "api:glossary-terms-details",
-            kwargs={
-                "id": Glossary.objects.order_by("id").all()[0].id,
-                "term_id": term["id"],
-            },
-            method="patch",
-            superuser=True,
-            code=200,
-            format="json",
-            request={"target": "test2"},
-        )
-        self.assertEqual(response.data["target"], "test2")
-
-    def test_delete_terms(self):
-        term = self.do_request(
-            "api:glossary-terms",
-            kwargs={"id": Glossary.objects.order_by("id").all()[0].id},
+            "api:project-components",
+            self.project_kwargs,
             method="post",
-            superuser=True,
             code=201,
-            format="json",
-            request={"language": {"code": "cs"}, "source": "test", "target": "test"},
-        ).data
-        self.do_request(
-            "api:glossary-terms-details",
-            kwargs={
-                "id": Glossary.objects.order_by("id").all()[0].id,
-                "term_id": term["id"],
-            },
-            method="delete",
             superuser=True,
-            code=204,
+            format="json",
+            request={
+                "name": "Local project",
+                "slug": "local-project",
+                "repo": "local:",
+                "vcs": "local",
+                "filemask": "*.strings",
+                "template": "en.strings",
+                "file_format": "strings-utf8",
+                "push": "https://username:password@github.com/example/push.git",
+                "new_lang": "none",
+                "enforced_checks": ["same"],
+            },
         )
-        self.assertEqual(Glossary.objects.order_by("id").all()[0].term_set.count(), 0)
+        self.assertEqual(response.data["repo"], "local:")
+        self.assertEqual(response.data["enforced_checks"], ["same"])
+        self.assertEqual(Component.objects.count(), 3)
+        component = Component.objects.get(slug="local-project")
+        self.assertEqual(component.enforced_checks, ["same"])
 
 
 class ComponentAPITest(APIBaseTest):
@@ -1635,17 +1495,19 @@ class ComponentAPITest(APIBaseTest):
 
     def test_list_components(self):
         response = self.client.get(reverse("api:component-list"))
-        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["count"], 2)
         self.assertEqual(response.data["results"][0]["slug"], "test")
         self.assertEqual(response.data["results"][0]["project"]["slug"], "test")
+        self.assertEqual(response.data["results"][1]["slug"], "glossary")
+        self.assertEqual(response.data["results"][1]["project"]["slug"], "test")
 
     def test_list_components_acl(self):
         self.create_acl()
         response = self.client.get(reverse("api:component-list"))
-        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["count"], 2)
         self.authenticate(True)
         response = self.client.get(reverse("api:component-list"))
-        self.assertEqual(response.data["count"], 2)
+        self.assertEqual(response.data["count"], 4)
 
     def test_get_component(self):
         response = self.client.get(
@@ -1754,8 +1616,8 @@ class ComponentAPITest(APIBaseTest):
             "api:component-detail", self.component_kwargs, method="put", code=403
         )
         component = self.client.get(
-            reverse("api:component-detail", kwargs=self.component_kwargs)
-        ).data
+            reverse("api:component-detail", kwargs=self.component_kwargs), format="json"
+        ).json()
         component["name"] = "New Name"
         response = self.do_request(
             "api:component-detail",
@@ -1769,6 +1631,7 @@ class ComponentAPITest(APIBaseTest):
         self.assertEqual(response.data["name"], "New Name")
 
     def test_delete(self):
+        self.assertEqual(Component.objects.count(), 2)
         self.do_request(
             "api:component-detail", self.component_kwargs, method="delete", code=403
         )
@@ -1779,7 +1642,7 @@ class ComponentAPITest(APIBaseTest):
             superuser=True,
             code=204,
         )
-        self.assertEqual(Component.objects.count(), 0)
+        self.assertEqual(Component.objects.count(), 1)
 
     def test_create_translation(self):
         self.component.new_lang = "add"
@@ -1811,6 +1674,53 @@ class ComponentAPITest(APIBaseTest):
             request={"language_code": "cs"},
         )
 
+    def test_links(self):
+        self.do_request(
+            "api:component-links",
+            self.component_kwargs,
+            method="get",
+            code=200,
+        )
+        self.do_request(
+            "api:component-links",
+            self.component_kwargs,
+            method="post",
+            code=403,
+            request={"project_slug": "test"},
+        )
+        self.do_request(
+            "api:component-links",
+            self.component_kwargs,
+            method="post",
+            code=400,
+            superuser=True,
+            request={"project_slug": "test"},
+        )
+        self.create_acl()
+        self.do_request(
+            "api:component-links",
+            self.component_kwargs,
+            method="post",
+            code=201,
+            superuser=True,
+            request={"project_slug": "acl"},
+        )
+        delete_kwargs = {"project_slug": "acl"}
+        delete_kwargs.update(self.component_kwargs)
+        self.do_request(
+            "api:component-delete-links",
+            delete_kwargs,
+            method="delete",
+            code=403,
+        )
+        self.do_request(
+            "api:component-delete-links",
+            delete_kwargs,
+            method="delete",
+            code=204,
+            superuser=True,
+        )
+
 
 class LanguageAPITest(APIBaseTest):
     def test_list_languages(self):
@@ -1825,8 +1735,8 @@ class LanguageAPITest(APIBaseTest):
         # Check plural exists
         self.assertEqual(response.data["plural"]["type"], 2)
         self.assertEqual(response.data["plural"]["number"], 3)
-        # Check for aliases
-        self.assertEqual(len(response.data["aliases"]), 2)
+        # Check for aliases, with recent language-data there are 3
+        self.assertGreaterEqual(len(response.data["aliases"]), 2)
 
     def test_create(self):
         self.do_request("api:language-list", method="post", code=403)
@@ -1954,15 +1864,15 @@ class LanguageAPITest(APIBaseTest):
 class TranslationAPITest(APIBaseTest):
     def test_list_translations(self):
         response = self.client.get(reverse("api:translation-list"))
-        self.assertEqual(response.data["count"], 4)
+        self.assertEqual(response.data["count"], 8)
 
     def test_list_translations_acl(self):
         self.create_acl()
         response = self.client.get(reverse("api:translation-list"))
-        self.assertEqual(response.data["count"], 4)
+        self.assertEqual(response.data["count"], 8)
         self.authenticate(True)
         response = self.client.get(reverse("api:translation-list"))
-        self.assertEqual(response.data["count"], 8)
+        self.assertEqual(response.data["count"], 16)
 
     def test_get_translation(self):
         response = self.client.get(
@@ -2030,6 +1940,31 @@ class TranslationAPITest(APIBaseTest):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response_json["count"], 1)
         self.assertEqual(response_json["results"][0]["source"], ["Hello, world!\n"])
+
+    def test_upload_bytes(self):
+        self.authenticate()
+        with open(TEST_PO, "rb") as handle:
+            response = self.client.put(
+                reverse("api:translation-file", kwargs=self.translation_kwargs),
+                {"file": BytesIO(handle.read())},
+            )
+        self.assertEqual(
+            response.data,
+            {
+                "accepted": 1,
+                "count": 4,
+                "not_found": 0,
+                "result": True,
+                "skipped": 0,
+                "total": 4,
+            },
+        )
+        translation = self.component.translation_set.get(language_code="cs")
+        unit = translation.unit_set.get(source="Hello, world!\n")
+        self.assertEqual(unit.target, "Ahoj světe!\n")
+        self.assertEqual(unit.state, STATE_TRANSLATED)
+
+        self.assertEqual(self.component.project.stats.suggestions, 0)
 
     def test_upload(self):
         self.authenticate()
@@ -2210,6 +2145,12 @@ class TranslationAPITest(APIBaseTest):
                 "fuzzy": 0,
                 "total": 4,
                 "recent_changes": 0,
+                "approved": 0,
+                "approved_percent": 0.0,
+                "comments": 0,
+                "suggestions": 0,
+                "readonly": 0,
+                "readonly_percent": 0.0,
             },
             skip=("last_change",),
         )
@@ -2305,8 +2246,72 @@ class TranslationAPITest(APIBaseTest):
             code=200,
         )
 
+    def test_add_bilingual(self):
+        self.do_request(
+            "api:translation-units",
+            {
+                "language__code": "cs",
+                "component__slug": "test",
+                "component__project__slug": "test",
+            },
+            method="post",
+            superuser=True,
+            request={"source": "Source", "target": "Target"},
+            code=403,
+        )
+        self.do_request(
+            "api:translation-units",
+            {
+                "language__code": "cs",
+                "component__slug": "test",
+                "component__project__slug": "test",
+            },
+            method="post",
+            superuser=True,
+            request={"source": "Source", "target": "Target"},
+            code=403,
+        )
+        self.component.manage_units = True
+        self.component.save()
+        self.do_request(
+            "api:translation-units",
+            {
+                "language__code": "cs",
+                "component__slug": "test",
+                "component__project__slug": "test",
+            },
+            method="post",
+            superuser=True,
+            request={"source": "Source", "target": "Target"},
+            code=200,
+        )
+        self.do_request(
+            "api:translation-units",
+            {
+                "language__code": "cs",
+                "component__slug": "test",
+                "component__project__slug": "test",
+            },
+            method="post",
+            superuser=True,
+            request={"source": "Source", "target": "Target"},
+            code=400,
+        )
+        self.do_request(
+            "api:translation-units",
+            {
+                "language__code": "cs",
+                "component__slug": "test",
+                "component__project__slug": "test",
+            },
+            method="post",
+            superuser=True,
+            request={"source": "Source", "target": "Target", "context": "Another"},
+            code=200,
+        )
+
     def test_delete(self):
-        self.assertEqual(Translation.objects.count(), 4)
+        start_count = Translation.objects.count()
         self.do_request(
             "api:translation-detail", self.translation_kwargs, method="delete", code=403
         )
@@ -2317,7 +2322,7 @@ class TranslationAPITest(APIBaseTest):
             superuser=True,
             code=204,
         )
-        self.assertEqual(Translation.objects.count(), 3)
+        self.assertEqual(Translation.objects.count(), start_count - 1)
 
 
 class UnitAPITest(APIBaseTest):
@@ -2439,12 +2444,12 @@ class UnitAPITest(APIBaseTest):
         unit = Unit.objects.get(
             translation__language_code="en", source="Hello, world!\n"
         )
-        # The params are silently ignored here
+        # The params are rejected here
         self.do_request(
             "api:unit-detail",
             kwargs={"pk": unit.pk},
             method="patch",
-            code=200,
+            code=403,
             request={"state": "20", "target": "Test translation"},
         )
         unit = Unit.objects.get(pk=unit.pk)
@@ -2468,6 +2473,38 @@ class UnitAPITest(APIBaseTest):
         )
         unit = Unit.objects.get(pk=unit.pk)
         self.assertEqual(unit.explanation, "This is good explanation")
+
+    def test_unit_flags(self):
+        unit = Unit.objects.get(
+            translation__language_code="cs", source="Hello, world!\n"
+        )
+        unit.translate(self.user, "Hello, world!\n", STATE_TRANSLATED)
+        self.assertEqual(unit.all_checks_names, {"same"})
+
+        # Edit on translation will fail
+        self.do_request(
+            "api:unit-detail",
+            kwargs={"pk": unit.pk},
+            method="patch",
+            code=403,
+            superuser=True,
+            request={"extra_flags": "ignore-same"},
+        )
+
+        # Edit on source will work
+        self.do_request(
+            "api:unit-detail",
+            kwargs={"pk": unit.source_unit.pk},
+            method="patch",
+            code=200,
+            superuser=True,
+            request={"extra_flags": "ignore-same"},
+        )
+
+        # Checks and flags should be now updated
+        unit = Unit.objects.get(pk=unit.id)
+        self.assertEqual(unit.all_flags.format(), "c-format, ignore-same")
+        self.assertEqual(unit.all_checks_names, set())
 
     def test_translate_plural_unit(self):
         unit = Unit.objects.get(
@@ -2781,7 +2818,7 @@ class ScreenshotAPITest(APIBaseTest):
 class ChangeAPITest(APIBaseTest):
     def test_list_changes(self):
         response = self.client.get(reverse("api:change-list"))
-        self.assertEqual(response.data["count"], 14)
+        self.assertEqual(response.data["count"], 20)
 
     def test_filter_changes_after(self):
         """Filter chanages since timestamp."""
@@ -2789,7 +2826,7 @@ class ChangeAPITest(APIBaseTest):
         response = self.client.get(
             reverse("api:change-list"), {"timestamp_after": start.isoformat()}
         )
-        self.assertEqual(response.data["count"], 14)
+        self.assertEqual(response.data["count"], 20)
 
     def test_filter_changes_before(self):
         """Filter changes prior to timestamp."""
@@ -2962,3 +2999,81 @@ class ComponentListAPITest(APIBaseTest):
             request={"name": "other"},
         )
         self.assertEqual(ComponentList.objects.get().name, "other")
+
+
+class AddonAPITest(APIBaseTest):
+    def create_addon(
+        self, superuser=True, code=201, name="weblate.gettext.linguas", **request
+    ):
+        request["name"] = name
+        return self.do_request(
+            "api:component-addons",
+            kwargs=self.component_kwargs,
+            method="post",
+            code=code,
+            superuser=superuser,
+            format="json",
+            request=request,
+        )
+
+    def test_create(self):
+        # Not authenticated user
+        response = self.create_addon(code=403, superuser=False)
+        self.assertFalse(self.component.addon_set.exists())
+        # Non existing addon
+        response = self.create_addon(name="invalid.addon", code=400)
+        self.assertFalse(self.component.addon_set.exists())
+        # Not compatible addon
+        response = self.create_addon(name="weblate.resx.update", code=400)
+        self.assertFalse(self.component.addon_set.exists())
+        # Success
+        response = self.create_addon()
+        self.assertTrue(
+            self.component.addon_set.filter(pk=response.data["id"]).exists()
+        )
+
+    def test_delete(self):
+        response = self.create_addon()
+        self.do_request(
+            "api:addon-detail",
+            kwargs={"pk": response.data["id"]},
+            method="delete",
+            code=403,
+        )
+        self.do_request(
+            "api:addon-detail",
+            kwargs={"pk": response.data["id"]},
+            method="delete",
+            superuser=True,
+            code=204,
+        )
+
+    def test_configuration(self):
+        self.create_addon(
+            name="weblate.gettext.mo", configuration={"path": "{{var}}"}, code=400
+        )
+
+    def test_edit(self):
+        initial = {"path": "{{ filename|stripext }}.mo"}
+        expected = {"path": "{{ language_code }}.mo"}
+        response = self.create_addon(name="weblate.gettext.mo", configuration=initial)
+        self.assertEqual(self.component.addon_set.get().configuration, initial)
+        self.do_request(
+            "api:addon-detail",
+            kwargs={"pk": response.data["id"]},
+            method="patch",
+            code=403,
+            format="json",
+            request={"configuration": expected},
+        )
+        self.assertEqual(self.component.addon_set.get().configuration, initial)
+        self.do_request(
+            "api:addon-detail",
+            kwargs={"pk": response.data["id"]},
+            method="patch",
+            superuser=True,
+            code=200,
+            format="json",
+            request={"configuration": expected},
+        )
+        self.assertEqual(self.component.addon_set.get().configuration, expected)

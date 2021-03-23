@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -21,6 +21,7 @@ import os
 import re
 from collections import defaultdict
 from datetime import timedelta
+from email.headerregistry import Address
 from importlib import import_module
 
 import social_django.utils
@@ -81,7 +82,6 @@ from weblate.accounts.forms import (
     DashboardSettingsForm,
     EmailForm,
     EmptyConfirmForm,
-    HostingForm,
     LanguagesForm,
     LoginForm,
     NotificationForm,
@@ -95,17 +95,18 @@ from weblate.accounts.forms import (
     UserSearchForm,
     UserSettingsForm,
 )
-from weblate.accounts.models import AuditLog, Subscription, VerifiedEmail
+from weblate.accounts.models import AuditLog, Profile, Subscription, VerifiedEmail
 from weblate.accounts.notifications import (
     FREQ_INSTANT,
     FREQ_NONE,
     NOTIFICATIONS,
     SCOPE_ADMIN,
+    SCOPE_ALL,
     SCOPE_COMPONENT,
-    SCOPE_DEFAULT,
     SCOPE_PROJECT,
-    send_notification_email,
+    SCOPE_WATCHED,
 )
+from weblate.accounts.pipeline import EmailAlreadyAssociated, UsernameAlreadyAssociated
 from weblate.accounts.utils import remove_user
 from weblate.auth.models import User
 from weblate.logger import LOGGER
@@ -129,18 +130,6 @@ Message from %(name)s <%(email)s>:
 %(message)s
 """
 
-HOSTING_TEMPLATE = """
-%(name)s <%(email)s> wants to host %(project)s
-
-Project:    %(project)s
-Website:    %(url)s
-
-Message:
-
-%(message)s
-
-Please review at https://hosted.weblate.org/hosting/#billing-%(billing_id)s
-"""
 
 TEMPLATE_FOOTER = """
 --
@@ -154,7 +143,7 @@ CONTACT_SUBJECTS = {
     "reg": "Registration problems",
     "hosting": "Commercial hosting",
     "account": "Suspicious account activity",
-    "trial": "Trial request",
+    "trial": "Trial extension request",
 }
 
 ANCHOR_RE = re.compile(r"^#[a-z]+$")
@@ -221,8 +210,8 @@ def mail_admins_contact(request, subject, message, context, sender, to):
         return
 
     mail = EmailMultiAlternatives(
-        "{0}{1}".format(settings.EMAIL_SUBJECT_PREFIX, subject % context),
-        "{}\n{}".format(
+        subject="{}{}".format(settings.EMAIL_SUBJECT_PREFIX, subject % context),
+        body="{}\n{}".format(
             message % context,
             TEMPLATE_FOOTER.format(
                 address=get_ip_address(request),
@@ -231,7 +220,7 @@ def mail_admins_contact(request, subject, message, context, sender, to):
             ),
         ),
         to=to,
-        headers={"Reply-To": sender},
+        from_email=sender,
     )
 
     mail.send(fail_silently=False)
@@ -251,28 +240,28 @@ def redirect_profile(page=""):
 def get_notification_forms(request):
     user = request.user
     if request.method == "POST":
-        for i in range(1000):
+        for i in range(200):
             prefix = NOTIFICATION_PREFIX_TEMPLATE.format(i)
             if prefix + "-scope" in request.POST:
                 yield NotificationForm(
-                    request.user, i > 0, {}, i == 0, prefix=prefix, data=request.POST
+                    request.user, i > 1, {}, i == 0, prefix=prefix, data=request.POST
                 )
     else:
         subscriptions = defaultdict(dict)
         initials = {}
 
-        # Ensure default and admin scopes are visible
-        for needed in (SCOPE_DEFAULT, SCOPE_ADMIN):
-            key = (needed, None, None)
+        # Ensure watched, admin and all scopes are visible
+        for needed in (SCOPE_WATCHED, SCOPE_ADMIN, SCOPE_ALL):
+            key = (needed, -1, -1)
             subscriptions[key] = {}
             initials[key] = {"scope": needed, "project": None, "component": None}
-        active = (SCOPE_DEFAULT, None, None)
+        active = (SCOPE_WATCHED, -1, -1)
 
         # Include additional scopes from request
         if "notify_project" in request.GET:
             try:
                 project = user.allowed_projects.get(pk=request.GET["notify_project"])
-                active = key = (SCOPE_PROJECT, project.pk, None)
+                active = key = (SCOPE_PROJECT, project.pk, -1)
                 subscriptions[key] = {}
                 initials[key] = {
                     "scope": SCOPE_PROJECT,
@@ -286,7 +275,7 @@ def get_notification_forms(request):
                 component = Component.objects.filter_access(user).get(
                     pk=request.GET["notify_component"],
                 )
-                active = key = (SCOPE_COMPONENT, None, component.pk)
+                active = key = (SCOPE_COMPONENT, component.project_id, component.pk)
                 subscriptions[key] = {}
                 initials[key] = {
                     "scope": SCOPE_COMPONENT,
@@ -299,8 +288,8 @@ def get_notification_forms(request):
         for subscription in user.subscription_set.iterator():
             key = (
                 subscription.scope,
-                subscription.project_id,
-                subscription.component_id,
+                subscription.project_id or -1,
+                subscription.component_id or -1,
             )
             subscriptions[key][subscription.notification] = subscription.frequency
             initials[key] = {
@@ -313,7 +302,7 @@ def get_notification_forms(request):
         for i, details in enumerate(sorted(subscriptions.items())):
             yield NotificationForm(
                 user,
-                i > 0,
+                i > 1,
                 details[1],
                 details[0] == active,
                 initial=initials[details[0]],
@@ -321,14 +310,46 @@ def get_notification_forms(request):
             )
 
 
+def fixup_profile(profile):
+    fields = set()
+    if not profile.language:
+        profile.language = get_language()
+        fields.add("language")
+
+    allowed = {clist.pk for clist in profile.allowed_dashboard_component_lists}
+
+    if not allowed and profile.dashboard_view in (
+        Profile.DASHBOARD_COMPONENT_LIST,
+        Profile.DASHBOARD_COMPONENT_LISTS,
+    ):
+        profile.dashboard_view = Profile.DASHBOARD_WATCHED
+        fields.add("dashboard_view")
+
+    if profile.dashboard_component_list_id and (
+        profile.dashboard_component_list_id not in allowed
+        or profile.dashboard_view != Profile.DASHBOARD_COMPONENT_LIST
+    ):
+        profile.dashboard_component_list = None
+        profile.dashboard_view = Profile.DASHBOARD_WATCHED
+        fields.add("dashboard_view")
+        fields.add("dashboard_component_list")
+
+    if (
+        not profile.dashboard_component_list_id
+        and profile.dashboard_view == Profile.DASHBOARD_COMPONENT_LIST
+    ):
+        profile.dashboard_view = Profile.DASHBOARD_WATCHED
+        fields.add("dashboard_view")
+
+    if fields:
+        profile.save(update_fields=fields)
+
+
 @never_cache
 @login_required
 def user_profile(request):
     profile = request.user.profile
-
-    if not profile.language:
-        profile.language = get_language()
-        profile.save(update_fields=["language"])
+    fixup_profile(profile)
 
     form_classes = [
         LanguagesForm,
@@ -480,7 +501,12 @@ def contact(request):
                 "%(subject)s",
                 CONTACT_TEMPLATE,
                 form.cleaned_data,
-                form.cleaned_data["email"],
+                str(
+                    Address(
+                        display_name=form.cleaned_data["name"],
+                        addr_spec=form.cleaned_data["email"],
+                    )
+                ),
                 settings.ADMINS_CONTACT,
             )
             return redirect("home")
@@ -507,52 +533,13 @@ def hosting(request):
     if not settings.OFFER_HOSTING:
         return redirect("home")
 
-    from weblate.billing.models import Billing, Plan
+    from weblate.billing.models import Billing
 
     billings = (
         Billing.objects.for_user(request.user)
         .filter(state=Billing.STATE_TRIAL)
         .order_by("-payment", "expiry")
     )
-    form = HostingForm()
-
-    if request.method == "POST" and "billing" in request.POST:
-        billing = billings.get(pk=request.POST["billing"])
-        if billing.valid_libre:
-            if "approve" in request.POST and request.user.is_superuser:
-                billing.state = Billing.STATE_ACTIVE
-                billing.plan = Plan.objects.get(slug="libre")
-                billing.save(update_fields=["state", "plan"])
-                return redirect("hosting")
-
-            if "request" in request.POST:
-                form = HostingForm(request.POST)
-                if form.is_valid():
-                    project = billing.projects.get()
-                    billing.payment["libre_request"] = True
-                    billing.save(update_fields=["payment"])
-                    mail_admins_contact(
-                        request,
-                        "Hosting request for %(billing)s",
-                        HOSTING_TEMPLATE,
-                        {
-                            "billing": billing,
-                            "name": request.user.full_name,
-                            "email": request.user.email,
-                            "project": project,
-                            "url": project.web,
-                            "message": form.cleaned_data["message"],
-                            "billing_id": billing.pk,
-                        },
-                        request.user.email,
-                        settings.ADMINS_HOSTING,
-                    )
-                    return redirect("hosting")
-
-        if "extend" in request.POST and request.user.is_superuser:
-            billing.expiry = timezone.now() + timedelta(days=14)
-            billing.save(update_fields=["expiry"])
-            return redirect("hosting")
 
     return render(
         request,
@@ -560,7 +547,6 @@ def hosting(request):
         {
             "title": _("Hosting"),
             "billings": billings,
-            "hosting_form": form,
         },
     )
 
@@ -590,19 +576,13 @@ def trial(request):
     if request.method == "POST":
         from weblate.billing.models import Billing, Plan
 
+        AuditLog.objects.create(request.user, request, "trial")
         billing = Billing.objects.create(
             plan=Plan.objects.get(slug=plan),
             state=Billing.STATE_TRIAL,
             expiry=timezone.now() + timedelta(days=14),
         )
         billing.owners.add(request.user)
-        AuditLog.objects.create(request.user, request, "trial")
-        send_notification_email(
-            "en",
-            [a[1] for a in settings.ADMINS] + settings.ADMINS_BILLING,
-            "new_trial",
-            context={"user": request.user, "billing": billing},
-        )
         messages.info(
             request,
             _(
@@ -658,7 +638,7 @@ def user_page(request, user):
     )
 
 
-def user_avatar(request, user, size):
+def user_avatar(request, user: str, size: int):
     """User avatar view."""
     allowed_sizes = (
         # Used in top navigation
@@ -677,7 +657,7 @@ def user_avatar(request, user, size):
 
     if user.email == "noreply@weblate.org":
         return redirect(get_fallback_avatar_url(size))
-    if user.email == "noreply+{}@weblate.org".format(user.pk):
+    if user.email == f"noreply+{user.pk}@weblate.org":
         return redirect(os.path.join(settings.STATIC_URL, "state/ghost.svg"))
 
     response = HttpResponse(
@@ -978,7 +958,7 @@ def watch(request, project, component=None):
         # Mute project level subscriptions
         mute_real(user, scope=SCOPE_PROJECT, component=None, project=obj)
         # Manually enable component level subscriptions
-        for default_subscription in user.subscription_set.filter(scope=SCOPE_DEFAULT):
+        for default_subscription in user.subscription_set.filter(scope=SCOPE_WATCHED):
             subscription, created = user.subscription_set.get_or_create(
                 notification=default_subscription.notification,
                 scope=SCOPE_COMPONENT,
@@ -1139,6 +1119,18 @@ def auth_fail(request, message):
     return redirect(reverse("login"))
 
 
+def registration_fail(request, message):
+    messages.error(request, _("Could not complete registration.") + " " + message)
+    messages.info(
+        request,
+        _("Please check if you have already registered an account.")
+        + " "
+        + _("You can also request a new password, if you have lost your credentials."),
+    )
+
+    return redirect(reverse("login"))
+
+
 def auth_redirect_token(request):
     return auth_fail(
         request,
@@ -1172,7 +1164,7 @@ def handle_missing_parameter(request, backend, error):
 
 @csrf_exempt
 @never_cache
-def social_complete(request, backend):
+def social_complete(request, backend):  # noqa: C901
     """Wrapper around social_django.views.complete.
 
     - Handles backend errors gracefully
@@ -1234,13 +1226,19 @@ def social_complete(request, backend):
     except AuthForbidden:
         report_error()
         return auth_fail(request, _("The server does not allow authentication."))
-    except AuthAlreadyAssociated:
-        return auth_fail(
+    except EmailAlreadyAssociated:
+        return registration_fail(
             request,
-            _(
-                "Could not complete registration. The supplied authentication, "
-                "e-mail address or username is already in use for another account."
-            ),
+            _("The supplied e-mail address is already in use for another account."),
+        )
+    except UsernameAlreadyAssociated:
+        return registration_fail(
+            request, _("The supplied username is already in use for another account.")
+        )
+    except AuthAlreadyAssociated:
+        return registration_fail(
+            request,
+            _("The supplied user identity is already in use for another account."),
         )
 
 
@@ -1255,6 +1253,7 @@ def subscribe(request):
             notification=request.POST["onetime"],
             scope=SCOPE_COMPONENT,
             frequency=FREQ_INSTANT,
+            project=component.project,
             component=component,
             onetime=True,
         )

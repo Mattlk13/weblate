@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -30,7 +30,7 @@ from django.db import models, transaction
 from django.db.models import F, Q
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from django.utils import timezone, translation
+from django.utils import timezone
 from django.utils.crypto import get_random_string
 from django.utils.functional import cached_property
 from django.utils.translation import gettext
@@ -45,11 +45,69 @@ from weblate.accounts.tasks import notify_auditlog
 from weblate.auth.models import User
 from weblate.lang.models import Language
 from weblate.trans.defines import EMAIL_LENGTH
+from weblate.trans.models import ComponentList
 from weblate.utils import messages
 from weblate.utils.decorators import disable_for_loaddata
 from weblate.utils.fields import EmailField, JSONField
 from weblate.utils.render import validate_editor
 from weblate.utils.request import get_ip_address, get_user_agent
+
+
+class WeblateAccountsConf(AppConf):
+    """Accounts settings."""
+
+    # Disable avatars
+    ENABLE_AVATARS = True
+
+    # Avatar URL prefix
+    AVATAR_URL_PREFIX = "https://www.gravatar.com/"
+
+    # Avatar fallback image
+    # See http://en.gravatar.com/site/implement/images/ for available choices
+    AVATAR_DEFAULT_IMAGE = "identicon"
+
+    # Enable registrations
+    REGISTRATION_OPEN = True
+
+    # Allow registration from certain backends
+    REGISTRATION_ALLOW_BACKENDS = []
+
+    # Registration email filter
+    REGISTRATION_EMAIL_MATCH = ".*"
+
+    # Captcha for registrations
+    REGISTRATION_CAPTCHA = True
+
+    # How long to keep auditlog entries
+    AUDITLOG_EXPIRY = 180
+
+    # Auto-watch setting for new users
+    DEFAULT_AUTO_WATCH = True
+
+    # Auth0 provider default image & title on login page
+    SOCIAL_AUTH_AUTH0_IMAGE = "auth0.svg"
+    SOCIAL_AUTH_AUTH0_TITLE = "Auth0"
+    SOCIAL_AUTH_SAML_IMAGE = "saml.svg"
+    SOCIAL_AUTH_SAML_TITLE = "SAML"
+
+    # Login required URLs
+    LOGIN_REQUIRED_URLS = []
+    LOGIN_REQUIRED_URLS_EXCEPTIONS = (
+        r"{URL_PREFIX}/accounts/(.*)$",  # Required for login
+        r"{URL_PREFIX}/admin/login/(.*)$",  # Required for admin login
+        r"{URL_PREFIX}/static/(.*)$",  # Required for development mode
+        r"{URL_PREFIX}/widgets/(.*)$",  # Allowing public access to widgets
+        r"{URL_PREFIX}/data/(.*)$",  # Allowing public access to data exports
+        r"{URL_PREFIX}/hooks/(.*)$",  # Allowing public access to notification hooks
+        r"{URL_PREFIX}/healthz/$",  # Allowing public access to health check
+        r"{URL_PREFIX}/api/(.*)$",  # Allowing access to API
+        r"{URL_PREFIX}/js/i18n/$",  # JavaScript localization
+        r"{URL_PREFIX}/contact/$",  # Optional for contact form
+        r"{URL_PREFIX}/legal/(.*)$",  # Optional for legal app
+    )
+
+    class Meta:
+        prefix = ""
 
 
 class Subscription(models.Model):
@@ -71,8 +129,9 @@ class Subscription(models.Model):
         unique_together = [("notification", "scope", "project", "component", "user")]
 
     def __str__(self):
-        return "{}:{} ({},{})".format(
+        return "{}:{},{} ({},{})".format(
             self.user.username,
+            self.get_scope_display(),
             self.get_notification_display(),
             self.project,
             self.component,
@@ -90,14 +149,19 @@ ACCOUNT_ACTIVITY = {
     "auth-disconnect": _("Removed sign in using {method} ({name})."),
     "login": _("Signed in using {method} ({name})."),
     "login-new": _("Signed in using {method} ({name}) from a new device."),
-    "register": _("Somebody has attempted to register with your e-mail."),
-    "connect": _("Somebody has attempted to register using your e-mail address."),
+    "register": _("Somebody attempted to register with your e-mail."),
+    "connect": _("Somebody attempted to register using your e-mail address."),
     "failed-auth": _("Could not sign in using {method} ({name})."),
     "locked": _("Account locked due to many failed sign in attempts."),
     "removed": _("Account and all private data removed."),
     "tos": _("Agreement with Terms of Service {date}."),
     "invited": _("Invited to Weblate by {username}."),
     "trial": _("Started trial period."),
+    "sent-email": _("Sent confirmation mail to {email}."),
+    "autocreated": _(
+        "The system created a user to track authorship of "
+        "translations uploaded by other user."
+    ),
 }
 # Override activty messages based on method
 ACCOUNT_ACTIVITY_METHOD = {
@@ -199,9 +263,7 @@ class AuditLog(models.Model):
     objects = AuditLogManager.from_queryset(AuditLogQuerySet)()
 
     def __str__(self):
-        return "{0} for {1} from {2}".format(
-            self.activity, self.user.username, self.address
-        )
+        return f"{self.activity} for {self.user.username} from {self.address}"
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
@@ -267,7 +329,7 @@ class VerifiedEmail(models.Model):
     email = models.EmailField(max_length=EMAIL_LENGTH)
 
     def __str__(self):
-        return "{0} - {1}".format(self.social.user.username, self.email)
+        return f"{self.social.user.username} - {self.email}"
 
     @property
     def provider(self):
@@ -366,6 +428,13 @@ class Profile(models.Model):
         validators=[MinValueValidator(1), MaxValueValidator(50)],
         help_text=_(
             "Number of nearby strings to show in each direction in the full editor."
+        ),
+    )
+    auto_watch = models.BooleanField(
+        verbose_name=_("Automatically watch projects on contribution"),
+        default=settings.DEFAULT_AUTO_WATCH,
+        help_text=_(
+            "Whenever you translate a string in a project, you will start watching it."
         ),
     )
 
@@ -523,8 +592,13 @@ class Profile(models.Model):
             )
 
     def dump_data(self):
+        def map_attr(attr):
+            if attr.endswith("_id"):
+                return attr[:-3]
+            return attr
+
         def dump_object(obj, *attrs):
-            return {attr: getattr(obj, attr) for attr in attrs}
+            return {map_attr(attr): getattr(obj, attr) for attr in attrs}
 
         result = {
             "basic": dump_object(
@@ -544,7 +618,7 @@ class Profile(models.Model):
                 "zen_mode",
                 "special_chars",
                 "dashboard_view",
-                "dashboard_component_list",
+                "dashboard_component_list_id",
             ),
             "auditlog": [
                 dump_object(log, "address", "user_agent", "timestamp", "activity")
@@ -567,16 +641,26 @@ class Profile(models.Model):
         return set(self.languages.values_list("pk", flat=True))
 
     @cached_property
+    def allowed_dashboard_component_lists(self):
+        return ComponentList.objects.filter(
+            show_dashboard=True,
+            components__project_id__in=self.user.allowed_project_ids,
+        ).distinct()
+
+    @cached_property
     def secondary_language_ids(self) -> Set[int]:
         return set(self.secondary_languages.values_list("pk", flat=True))
 
-    def get_language_order(self, language: Language) -> int:
+    def get_translation_order(self, translation) -> int:
         """Returns key suitable for ordering languages based on user preferences."""
+        language = translation.language
         if language.pk in self.primary_language_ids:
             return 0
         if language.pk in self.secondary_language_ids:
             return 1
-        return 2
+        if translation.is_source:
+            return 2
+        return 3
 
     @cached_property
     def watched_project_ids(self):
@@ -587,7 +671,7 @@ class Profile(models.Model):
         return project.id in self.watched_project_ids
 
 
-def set_lang(response, profile):
+def set_lang_cookie(response, profile):
     """Set session language based on user preferences."""
     if profile.language:
         response.set_cookie(
@@ -600,7 +684,6 @@ def set_lang(response, profile):
             httponly=settings.LANGUAGE_COOKIE_HTTPONLY,
             samesite=settings.LANGUAGE_COOKIE_SAMESITE,
         )
-        translation.activate(profile.language)
 
 
 @receiver(user_logged_in)
@@ -657,57 +740,3 @@ def create_profile_callback(sender, instance, created=False, **kwargs):
         # Create subscriptions
         if not instance.is_anonymous:
             create_default_notifications(instance)
-
-
-class WeblateAccountsConf(AppConf):
-    """Accounts settings."""
-
-    # Disable avatars
-    ENABLE_AVATARS = True
-
-    # Avatar URL prefix
-    AVATAR_URL_PREFIX = "https://www.gravatar.com/"
-
-    # Avatar fallback image
-    # See http://en.gravatar.com/site/implement/images/ for available choices
-    AVATAR_DEFAULT_IMAGE = "identicon"
-
-    # Enable registrations
-    REGISTRATION_OPEN = True
-
-    # Allow registration from certain backends
-    REGISTRATION_ALLOW_BACKENDS = []
-
-    # Registration email filter
-    REGISTRATION_EMAIL_MATCH = ".*"
-
-    # Captcha for registrations
-    REGISTRATION_CAPTCHA = True
-
-    # How long to keep auditlog entries
-    AUDITLOG_EXPIRY = 180
-
-    # Auth0 provider default image & title on login page
-    SOCIAL_AUTH_AUTH0_IMAGE = "auth0.svg"
-    SOCIAL_AUTH_AUTH0_TITLE = "Auth0"
-    SOCIAL_AUTH_SAML_IMAGE = "saml.svg"
-    SOCIAL_AUTH_SAML_TITLE = "SAML"
-
-    # Login required URLs
-    LOGIN_REQUIRED_URLS = []
-    LOGIN_REQUIRED_URLS_EXCEPTIONS = (
-        r"/accounts/(.*)$",  # Required for login
-        r"/admin/login/(.*)$",  # Required for admin login
-        r"/static/(.*)$",  # Required for development mode
-        r"/widgets/(.*)$",  # Allowing public access to widgets
-        r"/data/(.*)$",  # Allowing public access to data exports
-        r"/hooks/(.*)$",  # Allowing public access to notification hooks
-        r"/healthz/$",  # Allowing public access to health check
-        r"/api/(.*)$",  # Allowing access to API
-        r"/js/i18n/$",  # JavaScript localization
-        r"/contact/$",  # Optional for contact form
-        r"/legal/(.*)$",  # Optional for legal app
-    )
-
-    class Meta:
-        prefix = ""

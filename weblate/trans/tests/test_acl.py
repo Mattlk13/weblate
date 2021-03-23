@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -278,7 +278,7 @@ class ACLTest(FixtureTestCase):
             billing_group = 1
         else:
             billing_group = 0
-        match = "{}@".format(self.project.name)
+        match = f"{self.project.name}@"
         self.project.access_control = Project.ACCESS_PUBLIC
         self.project.translation_review = False
         self.project.save()

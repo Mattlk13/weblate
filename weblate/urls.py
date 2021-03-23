@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -61,6 +61,7 @@ import weblate.utils.urls
 import weblate.wladmin.sites
 import weblate.wladmin.views
 from weblate.auth.decorators import management_access
+from weblate.configuration.views import CustomCSSView
 from weblate.sitemaps import SITEMAPS
 from weblate.trans.feeds import (
     ChangesFeed,
@@ -96,37 +97,6 @@ real_patterns = [
         "engage/<name:project>/<name:lang>/",
         weblate.trans.views.basic.show_engage,
         name="engage",
-    ),
-    # Glossary pages
-    path(
-        "glossaries/<name:project>/",
-        weblate.glossary.views.show_glossaries,
-        name="show_glossaries",
-    ),
-    path(
-        "glossaries/<name:project>/<name:lang>/",
-        weblate.glossary.views.show_glossary,
-        name="show_glossary",
-    ),
-    path(
-        "upload-glossaries/<name:project>/<name:lang>/",
-        weblate.glossary.views.upload_glossary,
-        name="upload_glossary",
-    ),
-    path(
-        "delete-glossaries/<int:pk>/",
-        weblate.glossary.views.delete_glossary,
-        name="delete_glossary",
-    ),
-    path(
-        "edit-glossaries/<int:pk>/",
-        weblate.glossary.views.edit_glossary,
-        name="edit_glossary",
-    ),
-    path(
-        "download-glossaries/<name:project>/<name:lang>/",
-        weblate.glossary.views.download_glossary,
-        name="download_glossary",
     ),
     # Subroject pages
     path(
@@ -164,6 +134,11 @@ real_patterns = [
         "component-list/<name:name>/",
         weblate.trans.views.basic.show_component_list,
         name="component-list",
+    ),
+    path(
+        "browse/<name:project>/<name:component>/<name:lang>/",
+        weblate.trans.views.edit.browse,
+        name="browse",
     ),
     path(
         "translate/<name:project>/<name:component>/<name:lang>/",
@@ -562,20 +537,26 @@ real_patterns = [
         weblate.trans.views.git.cleanup_translation,
         name="cleanup_translation",
     ),
+    # VCS manipulation - force sync
+    path(
+        "file-sync/<name:project>/",
+        weblate.trans.views.git.file_sync_project,
+        name="file_sync_project",
+    ),
+    path(
+        "file-sync/<name:project>/<name:component>/",
+        weblate.trans.views.git.file_sync_component,
+        name="file_sync_component",
+    ),
+    path(
+        "file-sync/<name:project>/<name:component>/<name:lang>/",
+        weblate.trans.views.git.file_sync_translation,
+        name="file_sync_translation",
+    ),
     path(
         "progress/<name:project>/<name:component>/",
         weblate.trans.views.settings.component_progress,
         name="component_progress",
-    ),
-    path(
-        "progress/<name:project>/<name:component>/terminate/",
-        weblate.trans.views.settings.component_progress_terminate,
-        name="component_progress_terminate",
-    ),
-    path(
-        "js/progress/<name:project>/<name:component>/",
-        weblate.trans.views.settings.component_progress_js,
-        name="component_progress_js",
     ),
     # Announcements
     path(
@@ -608,6 +589,11 @@ real_patterns = [
         "remove/<name:project>/<name:component>/",
         weblate.trans.views.settings.remove_component,
         name="remove_component",
+    ),
+    path(
+        "remove/<name:project>/-/<name:lang>/",
+        weblate.trans.views.settings.remove_project_language,
+        name="remove-project-language",
     ),
     path(
         "remove/<name:project>/<name:component>/<name:lang>/",
@@ -900,11 +886,6 @@ real_patterns = [
         name="js-ignore-check-source",
     ),
     path(
-        "js/task/<uuid:task_id>/",
-        weblate.trans.views.js.task_progress,
-        name="js_task_progress",
-    ),
-    path(
         "js/i18n/",
         cache_page(3600)(
             vary_on_cookie(
@@ -954,10 +935,16 @@ real_patterns = [
         weblate.trans.views.edit.save_zen,
         name="save_zen",
     ),
+    # Glossary add
     path(
         "js/glossary/<int:unit_id>/",
         weblate.glossary.views.add_glossary_term,
         name="js-add-glossary",
+    ),
+    path(
+        "css/custom.css",
+        CustomCSSView.as_view(),
+        name="css-custom",
     ),
     # Admin interface
     path(
@@ -976,11 +963,15 @@ real_patterns = [
         name="manage-users-check",
     ),
     path("manage/activate/", weblate.wladmin.views.activate, name="manage-activate"),
+    path("manage/discovery/", weblate.wladmin.views.discovery, name="manage-discovery"),
     path("manage/alerts/", weblate.wladmin.views.alerts, name="manage-alerts"),
     path("manage/repos/", weblate.wladmin.views.repos, name="manage-repos"),
     path("manage/ssh/", weblate.wladmin.views.ssh, name="manage-ssh"),
     path("manage/ssh/key/", weblate.wladmin.views.ssh_key, name="manage-ssh-key"),
     path("manage/backup/", weblate.wladmin.views.backups, name="manage-backups"),
+    path(
+        "manage/appearance/", weblate.wladmin.views.appearance, name="manage-appearance"
+    ),
     path(
         "manage/performance/",
         weblate.wladmin.views.performance,
@@ -1092,6 +1083,8 @@ if "weblate.billing" in settings.INSTALLED_APPS:
             name="invoice-download",
         ),
         path("billing/", weblate.billing.views.overview, name="billing"),
+        path("billing/<int:pk>/", weblate.billing.views.detail, name="billing-detail"),
+        path("manage/billing/", weblate.wladmin.views.billing, name="manage-billing"),
     ]
 
 # Git exporter integration

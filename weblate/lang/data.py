@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -18,28 +18,25 @@
 #
 # pylint: disable=line-too-long
 
-
 from django.utils.translation import pgettext_lazy
 from weblate_language_data import languages
+from weblate_language_data.ambiguous import AMBIGUOUS
 
 NO_CODE_LANGUAGES = {lang[0] for lang in languages.LANGUAGES}
 
-# List of RTL languages
-RTL_LANGS = {
-    "ar",
-    "arc",
-    "ckb",
-    "dv",
-    "fa",
-    "ha",
-    "he",
-    "ks",
-    "ps",
-    "ug",
-    "ur",
-    "yi",
-    "ms_Arab",
-}
+UNDERSCORE_EXCEPTIONS = {"nb_NO", "zh_Hant", "zh_Hans", "be_Latn", "ro_MD", "pt_BR"}
+AT_EXCEPTIONS = {"ca@valencia"}
+
+
+def is_basic(code):
+    if code in AMBIGUOUS:
+        return False
+    if "_" in code:
+        return code in UNDERSCORE_EXCEPTIONS
+    return "@" not in code or code in AT_EXCEPTIONS
+
+
+BASIC_LANGUAGES = {lang for lang in NO_CODE_LANGUAGES if is_basic(lang)}
 
 # Following variables are used to map Gettext plural formulas
 # to one/few/may/other like rules
@@ -108,6 +105,7 @@ ONE_TWO_FEW_MANY_OTHER_PLURALS = (
 ONE_FEW_MANY_OTHER_PLURALS = (
     "n==1 ? 0 : n==0 || ( n%100>1 && n%100<11) ? 1 : (n%100>10 && n%100<20 ) ? 2 : 3",
     "n==1 ? 0 : n%10>=2 && (n%100<10 || n%100>=20) ? 1 : n%10==0 || (n%100>10 && n%100<20) ? 2 : 3",
+    "n==1 ? 3 : n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2",
 )
 
 ONE_OTHER_ZERO_PLURALS = ("n%10==1 && n%100!=11 ? 0 : n != 0 ? 1 : 2",)

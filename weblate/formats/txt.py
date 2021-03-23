@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -42,7 +42,7 @@ class TextItem:
 
     @cached_property
     def location(self):
-        return "{}:{}".format(self.filename, self.line)
+        return f"{self.filename}:{self.line}"
 
     def getid(self):
         return self.location
@@ -52,7 +52,7 @@ class TextParser:
     """Simple text parser returning all content as single unit."""
 
     def __init__(self, storefile, filename=None, flags=None):
-        with open(storefile, "r") as handle:
+        with open(storefile) as handle:
             content = handle.read()
         if filename:
             self.filename = filename
@@ -106,7 +106,7 @@ class MultiParser:
 
 class AppStoreParser(MultiParser):
     filenames = (
-        ("title.txt", "max-length:30"),
+        ("title.txt", "max-length:50"),
         ("short[_-]description.txt", "max-length:80"),
         ("full[_-]description.txt", "max-length:4000"),
         ("subtitle.txt", "max-length:80"),
@@ -124,7 +124,7 @@ class AppStoreParser(MultiParser):
         parts = filename.rsplit("changelogs/", 1)
         if len(parts) == 2:
             try:
-                return -int(parts[1].split(".")[0])
+                return "-{}".format(int(parts[1].split(".")[0]))
             except ValueError:
                 pass
         return filename
@@ -183,9 +183,10 @@ class AppStoreFormat(TranslationFormat):
     monolingual = True
     unit_class = TextUnit
     simple_filename = False
+    language_format = "java"
 
     @classmethod
-    def load(cls, storefile):
+    def load(cls, storefile, template_store):
         return AppStoreParser(storefile)
 
     def create_unit(self, key: str, source: Union[str, List[str]]):
@@ -218,12 +219,19 @@ class AppStoreFormat(TranslationFormat):
         return None
 
     @classmethod
-    def is_valid_base_for_new(cls, base, monolingual):
+    def is_valid_base_for_new(
+        cls,
+        base: str,
+        monolingual: bool,
+        errors: Optional[List] = None,
+        fast: bool = False,
+    ) -> bool:
         """Check whether base is valid."""
         if not base:
             return True
         try:
-            AppStoreParser(base)
+            if not fast:
+                AppStoreParser(base)
             return True
         except Exception:
             report_error(cause="File parse error")

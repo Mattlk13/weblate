@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -69,3 +69,9 @@ class InviteUserForm(forms.ModelForm, UniqueEmailMixin):
             username=request.user.username,
         )
         send_invitation(request, project.name if project else settings.SITE_TITLE, user)
+
+
+class AdminInviteUserForm(InviteUserForm):
+    class Meta:
+        model = User
+        fields = ["email", "username", "full_name", "is_superuser"]

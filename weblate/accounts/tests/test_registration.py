@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -54,9 +54,9 @@ SAML_BACKENDS = (
     "social_core.backends.saml.SAMLAuth",
     "weblate.accounts.auth.WeblateUserBackend",
 )
-with open(get_test_file("saml.crt"), "r") as handle:
+with open(get_test_file("saml.crt")) as handle:
     SAML_CERT = handle.read()
-with open(get_test_file("saml.key"), "r") as handle:
+with open(get_test_file("saml.key")) as handle:
     SAML_KEY = handle.read()
 
 
@@ -149,6 +149,12 @@ class BaseRegistrationTest(TestCase, RegistrationTestMixin):
 
         # Ensure we've picked up all mails
         self.assertEqual(len(mail.outbox), 0)
+
+        # Ensure the audit log matches expectations
+        self.assertEqual(
+            set(user.auditlog_set.values_list("activity", flat=True)),
+            {"sent-email", "password"},
+        )
 
 
 class RegistrationTest(BaseRegistrationTest):
@@ -447,7 +453,7 @@ class RegistrationTest(BaseRegistrationTest):
         response = self.client.post(
             reverse("confirm"), {"password": "1pa$$word!"}, follow=True
         )
-        self.assertRedirects(response, "{0}#account".format(reverse("profile")))
+        self.assertRedirects(response, "{}#account".format(reverse("profile")))
 
         # Check database models
         user = User.objects.get(username="username")

@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -21,6 +21,7 @@ import os
 import os.path
 
 from django.conf import settings
+from django.core.cache import cache
 from django.db import models, transaction
 from django.db.models import Count, Value
 from django.db.models.functions import Replace
@@ -28,6 +29,7 @@ from django.urls import reverse
 from django.utils.functional import cached_property
 from django.utils.translation import gettext_lazy
 
+from weblate.formats.models import FILE_FORMATS
 from weblate.lang.models import Language
 from weblate.memory.tasks import import_memory
 from weblate.trans.defines import PROJECT_NAME_LENGTH
@@ -90,12 +92,6 @@ class Project(FastDeleteModelMixin, models.Model, URLMixin, PathMixin, CacheKeyM
     web = models.URLField(
         verbose_name=gettext_lazy("Project website"),
         help_text=gettext_lazy("Main website of translated project."),
-    )
-    mail = models.EmailField(
-        verbose_name=gettext_lazy("Mailing list"),
-        blank=True,
-        max_length=254,
-        help_text=gettext_lazy("Mailing list for translators."),
     )
     instructions = models.TextField(
         verbose_name=gettext_lazy("Translation instructions"),
@@ -213,9 +209,9 @@ class Project(FastDeleteModelMixin, models.Model, URLMixin, PathMixin, CacheKeyM
 
             # Update glossaries if needed
             if old.name != self.name:
-                self.glossary_set.filter(name__contains=old.name).update(
-                    name=Replace("name", Value(old.name), Value(self.name))
-                )
+                self.component_set.filter(
+                    is_glossary=True, name__contains=old.name
+                ).update(name=Replace("name", Value(old.name), Value(self.name)))
 
         # Update translation memory on enabled sharing
         if update_tm:
@@ -250,7 +246,7 @@ class Project(FastDeleteModelMixin, models.Model, URLMixin, PathMixin, CacheKeyM
         return dict(part.split(":") for part in self.language_aliases.split(","))
 
     def get_group(self, group):
-        return self.group_set.get(name="{0}{1}".format(self.name, group))
+        return self.group_set.get(name=f"{self.name}{group}")
 
     def add_user(self, user, group=None):
         """Add user based on username or email address."""
@@ -350,6 +346,10 @@ class Project(FastDeleteModelMixin, models.Model, URLMixin, PathMixin, CacheKeyM
         """Push all Git repos."""
         return self.on_repo_components(True, "do_cleanup", request)
 
+    def do_file_sync(self, request=None):
+        """Push all Git repos."""
+        return self.on_repo_components(True, "do_file_sync", request)
+
     def can_push(self):
         """Check whether any suprojects can push."""
         return self.on_repo_components(False, "can_push")
@@ -358,24 +358,39 @@ class Project(FastDeleteModelMixin, models.Model, URLMixin, PathMixin, CacheKeyM
     def all_repo_components(self):
         """Return list of all unique VCS components."""
         result = list(self.component_set.with_repo())
-        included = {component.get_repo_link_url() for component in result}
+        included = {component.get_repo_link_url().lower() for component in result}
 
         linked = self.component_set.filter(repo__startswith="weblate:")
         for other in linked:
-            if other.repo in included:
+            repo_url = other.repo.lower()
+            if repo_url in included:
                 continue
-            included.add(other.repo)
+            included.add(repo_url)
             result.append(other)
 
         return result
 
     @cached_property
+    def billings(self):
+        if "weblate.billing" not in settings.INSTALLED_APPS:
+            return []
+        return self.billing_set.all()
+
+    @property
+    def billing(self):
+        return self.billings[0]
+
+    @cached_property
     def paid(self):
-        return (
-            "weblate.billing" not in settings.INSTALLED_APPS
-            or not self.billing_set.exists()
-            or self.billing_set.filter(paid=True).exists()
-        )
+        return not self.billings or any(billing.paid for billing in self.billings)
+
+    @cached_property
+    def is_trial(self):
+        return any(billing.is_trial for billing in self.billings)
+
+    @cached_property
+    def is_libre_trial(self):
+        return any(billing.is_libre_trial for billing in self.billings)
 
     def post_create(self, user, billing=None):
         from weblate.trans.models import Change
@@ -397,10 +412,69 @@ class Project(FastDeleteModelMixin, models.Model, URLMixin, PathMixin, CacheKeyM
     def all_alerts(self):
         from weblate.trans.models import Alert
 
-        result = Alert.objects.filter(component__project=self)
+        result = Alert.objects.filter(component__project=self, dismissed=False)
         list(result)
         return result
 
     @cached_property
     def has_alerts(self):
         return self.all_alerts.exists()
+
+    @cached_property
+    def all_admins(self):
+        from weblate.auth.models import User
+
+        return User.objects.all_admins(self).select_related("profile")
+
+    @cached_property
+    def child_components(self):
+        return self.component_set.distinct() | self.shared_components.distinct()
+
+    def scratch_create_component(
+        self, name, slug, source_language, file_format, has_template=None, **kwargs
+    ):
+        format_cls = FILE_FORMATS[file_format]
+        if has_template is None:
+            has_template = format_cls.monolingual is None or format_cls.monolingual
+        if has_template:
+            template = f"{source_language.code}.{format_cls.extension()}"
+        else:
+            template = ""
+        # Create component
+        return self.component_set.create(
+            file_format=file_format,
+            filemask=f"*.{format_cls.extension()}",
+            template=template,
+            vcs="local",
+            repo="local:",
+            source_language=source_language,
+            name=name,
+            slug=slug,
+            manage_units=True,
+            **kwargs,
+        )
+
+    @cached_property
+    def glossaries(self):
+        return [
+            component for component in self.child_components if component.is_glossary
+        ]
+
+    @cached_property
+    def glossary_automaton_key(self):
+        return f"project-glossary-{self.pk}"
+
+    def invalidate_glossary_cache(self):
+        cache.delete(self.glossary_automaton_key)
+        if "glossary_automaton" in self.__dict__:
+            del self.__dict__["glossary_automaton"]
+
+    @cached_property
+    def glossary_automaton(self):
+        from weblate.glossary.models import get_glossary_automaton
+
+        result = cache.get(self.glossary_automaton_key)
+        if result is None:
+            result = get_glossary_automaton(self)
+            cache.set(self.glossary_automaton_key, result, 24 * 3600)
+        return result

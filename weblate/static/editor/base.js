@@ -35,32 +35,37 @@ WLT.Editor = (function () {
     var translationAreaSelector = ".translation-editor";
 
     this.$editor = $(".js-editor");
-    this.$translationArea = $(translationAreaSelector);
+    /* Only insert actual translation editor, not a popup for adding variant */
+    this.$translationArea = $(".translator .translation-editor");
 
-    this.$editor.on("change", translationAreaSelector, testChangeHandler);
-    this.$editor.on("keypress", translationAreaSelector, testChangeHandler);
-    this.$editor.on("keydown", translationAreaSelector, testChangeHandler);
-    this.$editor.on("paste", translationAreaSelector, testChangeHandler);
+    this.$editor.on("input", translationAreaSelector, (e) => {
+      WLT.Utils.markTranslated($(e.target).closest("form"));
+    });
+
     this.$editor.on("focusin", translationAreaSelector, function () {
       lastEditor = $(this);
     });
 
     /* Count characters */
-    this.$editor.on("keyup", translationAreaSelector, function () {
-      var $this = $(this);
-      var counter = $this.parent().find(".length-indicator");
-      var limit = parseInt(counter.data("max"));
-      var length = $this.val().length;
-      counter.text(length);
-      if (length >= limit) {
-        counter.parent().addClass("badge-danger").removeClass("badge-warning");
-      } else if (length + 10 >= limit) {
-        counter.parent().addClass("badge-warning").removeClass("badge-danger");
+    this.$editor.on("input", translationAreaSelector, (e) => {
+      var textarea = e.target;
+      var editor = textarea.parentElement.parentElement;
+      var counter = editor.querySelector(".length-indicator");
+      var classToggle = editor.classList;
+
+      var limit = parseInt(counter.getAttribute("data-max"));
+      var length = textarea.value.length;
+
+      counter.textContent = length;
+      if (length > limit) {
+        classToggle.remove("has-warning");
+        classToggle.add("has-error");
+      } else if (length > limit - 10) {
+        classToggle.add("has-warning");
+        classToggle.remove("has-error");
       } else {
-        counter
-          .parent()
-          .removeClass("badge-warning")
-          .removeClass("badge-danger");
+        classToggle.remove("has-warning");
+        classToggle.remove("has-error");
       }
     });
 
@@ -72,9 +77,7 @@ WLT.Editor = (function () {
       $this
         .closest(".translation-item")
         .find(".translation-editor")
-        .val($.parseJSON($this.data("content")))
-        .change();
-      autosize.update($(".translation-editor"));
+        .replaceValue($.parseJSON($this.data("content")));
       WLT.Utils.markFuzzy($this.closest("form"));
       $this.button("reset");
       e.preventDefault();
@@ -83,11 +86,11 @@ WLT.Editor = (function () {
     /* Direction toggling */
     this.$editor.on("change", ".direction-toggle", function () {
       var $this = $(this);
+      var direction = $this.find("input").val();
+      var container = $this.closest(".translation-item");
 
-      $this
-        .closest(".translation-item")
-        .find(".translation-editor")
-        .attr("dir", $this.find("input").val());
+      container.find(".translation-editor").attr("dir", direction);
+      container.find(".highlighted-output").attr("dir", direction);
     });
 
     /* Special characters */
@@ -98,9 +101,7 @@ WLT.Editor = (function () {
       $this
         .closest(".translation-item")
         .find(".translation-editor")
-        .insertAtCaret(text)
-        .change();
-      autosize.update($(".translation-editor"));
+        .insertAtCaret(text);
       e.preventDefault();
     });
 
@@ -110,10 +111,7 @@ WLT.Editor = (function () {
     this.$translationArea[0].focus();
   }
 
-  EditorBase.prototype.init = function () {
-    /* Autosizing */
-    autosize(this.$translationArea);
-  };
+  EditorBase.prototype.init = function () {};
 
   EditorBase.prototype.initHighlight = function () {
     var hlSelector = ".hlcheck";
@@ -181,13 +179,6 @@ WLT.Editor = (function () {
     );
   };
 
-  function testChangeHandler(e) {
-    if (e.key && e.key === "Tab") {
-      return;
-    }
-    WLT.Utils.markTranslated($(this).closest("form"));
-  }
-
   function insertEditor(text, element) {
     var root;
 
@@ -209,8 +200,7 @@ WLT.Editor = (function () {
       }
     }
 
-    editor.insertAtCaret($.trim(text)).change();
-    autosize.update(editor);
+    editor.insertAtCaret($.trim(text));
   }
 
   return {

@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -69,6 +69,14 @@ PAGURE_REPOS = (
     "https://{server}/{project}.git",
     "ssh://git@{server}/{project}",
     "ssh://git@{server}/{project}.git",
+)
+
+AZURE_REPOS = (
+    "https://dev.azure.com/{organization}/{project}/_git/{repository}",
+    "https://dev.azure.com/{organization}/{projectId}/_git/{repositoryId}",
+    "git@ssh.dev.azure.com:v3/{organization}/{project}/{repository}",
+    "https://{organization}.visualstudio.com/{project}/_git/{repository}",
+    "{organization}@vs-ssh.visualstudio.com:v3/{organization}/{project}/{repository}",
 )
 
 HOOK_HANDLERS = {}
@@ -184,11 +192,11 @@ def vcs_service_hook(request, service):
         # We need to match also URLs which include username and password
         if repo.startswith("http://"):
             spfilter |= Q(repo__startswith="http://") & Q(
-                repo__endswith="@{0}".format(repo[7:])
+                repo__endswith="@{}".format(repo[7:])
             )
         elif repo.startswith("https://"):
             spfilter |= Q(repo__startswith="https://") & Q(
-                repo__endswith="@{0}".format(repo[8:])
+                repo__endswith="@{}".format(repo[8:])
             )
         # Include URLs with trailing slash
         spfilter |= Q(repo=repo + "/")
@@ -252,7 +260,7 @@ def bitbucket_extract_changes(data):
         return data["push"]["changes"]
     if "commits" in data:
         return data["commits"]
-    return {}
+    return []
 
 
 def bitbucket_extract_branch(data):
@@ -287,7 +295,7 @@ def bitbucket_extract_full_name(repository):
 
 def bitbucket_extract_repo_url(data, repository):
     if "links" in repository:
-        if "html" in data["repository"]["links"]:
+        if "html" in repository["links"]:
             return repository["links"]["html"]["href"]
         return repository["links"]["self"][0]["href"]
     if "canon_url" in data:
@@ -303,10 +311,15 @@ def bitbucket_hook_helper(data, request):
         "repo:push",
         "repo:refs_changed",
         "pullrequest:fulfilled",
+        "pr:merged",
     ):
         return None
 
-    repository = data["repository"]
+    if "pullRequest" in data:
+        # The pr:merged event
+        repository = data["pullRequest"]["fromRef"]["repository"]
+    else:
+        repository = data["repository"]
     full_name = bitbucket_extract_full_name(repository)
     repo_url = bitbucket_extract_repo_url(data, repository)
 
@@ -325,10 +338,8 @@ def bitbucket_hook_helper(data, request):
         # Construct possible repository URLs
         for repo in templates:
             repos.extend(
-                (
-                    repo.format(full_name=full_name, server=server)
-                    for server in repo_servers
-                )
+                repo.format(full_name=full_name, server=server)
+                for server in repo_servers
             )
 
     if not repos:
@@ -340,7 +351,7 @@ def bitbucket_hook_helper(data, request):
         "repo_url": repo_url,
         "repos": repos,
         "branch": bitbucket_extract_branch(data),
-        "full_name": "{}.git".format(full_name),
+        "full_name": f"{full_name}.git",
     }
 
 
@@ -373,7 +384,7 @@ def github_hook_helper(data, request):
         "repo_url": data["repository"]["url"],
         "repos": repos,
         "branch": branch,
-        "full_name": "{}/{}.git".format(owner, slug),
+        "full_name": f"{owner}/{slug}.git",
     }
 
 
@@ -462,11 +473,51 @@ def pagure_hook_helper(data, request):
 def azure_hook_helper(data, request):
     if data.get("eventType") != "git.push":
         return None
+
     http_url = data["resource"]["repository"]["remoteUrl"]
+    branch = re.sub(r"^refs/heads/", "", data["resource"]["refUpdates"][0]["name"])
+    project = data["resource"]["repository"]["project"]["name"]
+    projectid = data["resource"]["repository"]["project"]["id"]
+    repository = data["resource"]["repository"]["name"]
+    repositoryid = data["resource"]["repository"]["id"]
+
+    match = re.match(
+        r"^https?:\/\/dev\.azure\.com\/"
+        r"(?P<organization>[a-zA-Z0-9]+[a-zA-Z0-9-]*[a-zA-Z0-9]*)",
+        http_url,
+    )
+
+    # Fallback to support old url structure {organization}.visualstudio.com
+    if match is None:
+        match = re.match(
+            r"^https?:\/\/"
+            r"(?P<organization>[a-zA-Z0-9]+[a-zA-Z0-9-]*[a-zA-Z0-9]*)"
+            r"\.visualstudio\.com",
+            http_url,
+        )
+    organization = None
+
+    if match is not None:
+        organization = match.group("organization")
+
+    if organization is not None:
+        repos = [
+            repo.format(
+                organization=organization,
+                project=project,
+                projectId=projectid,
+                repository=repository,
+                repositoryId=repositoryid,
+            )
+            for repo in AZURE_REPOS
+        ]
+    else:
+        repos = [http_url]
+
     return {
         "service_long_name": "Azure",
         "repo_url": http_url,
-        "repos": [http_url],
-        "branch": data["resource"]["refUpdates"][0]["name"].rsplit("/")[-1],
-        "full_name": data["resource"]["repository"]["name"],
+        "repos": repos,
+        "branch": branch,
+        "full_name": repository,
     }

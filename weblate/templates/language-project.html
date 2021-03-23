@@ -16,7 +16,6 @@
   <li class="active"><a href="#overview" data-toggle="tab">{% trans "Components" %}</a></li>
   <li><a href="#information" data-toggle="tab">{% trans "Info" %}</a></li>
   <li><a href="#search" data-toggle="tab">{% trans "Search" %}</a></li>
-  <li><a href="{% url 'show_glossary' project=project.slug lang=language.code %}">{% trans "Glossary" %}</a></li>
   <li class="dropdown">
     <a class="dropdown-toggle" data-toggle="dropdown" href="#">
       {% trans "Insights" %} <span class="caret"></span>
@@ -40,6 +39,10 @@
     </a>
     <ul class="dropdown-menu">
       <li><a href="{% url 'checks' %}?lang={{ language.code }}&amp;project={{ project.slug }}">{% trans "Failing checks" %}</a></li>
+      {% if delete_form %}
+      <li role="separator" class="divider"></li>
+      <li><a href="#delete" data-toggle="tab">{% trans "Removal" %}</a></li>
+      {% endif %}
     </ul>
    </li>
 {% include "snippets/watch-dropdown.html" %}
@@ -56,7 +59,7 @@
 <table class="table table-striped table-autowidth">
 {% include "project_info.html" %}
 {% include "snippets/license_info.html" %}
-{% include "project_stats.html" with stats=language_stats %}
+{% include "snippets/stats.html" with stats=language_stats %}
 </table>
 {% endwith %}
 </div>
@@ -77,6 +80,10 @@
 </form>
 
 </div>
+
+{% if delete_form %}
+{% include "trans/delete-form.html" %}
+{% endif %}
 
 
 </div>

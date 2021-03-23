@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -17,11 +17,9 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-
 import os.path
 
 from appconf import AppConf
-from django.conf import settings
 
 
 class WeblateConf(AppConf):
@@ -29,7 +27,7 @@ class WeblateConf(AppConf):
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     # Data directory
-    DATA_DIR = os.path.join(settings.BASE_DIR, "data")
+    DATA_DIR = os.path.join(BASE_DIR, "data")
 
     # Akismet API key
     AKISMET_API_KEY = None
@@ -76,6 +74,9 @@ class WeblateConf(AppConf):
 
     # Google Analytics
     GOOGLE_ANALYTICS_ID = None
+
+    # Link for support portal
+    GET_HELP_URL = None
 
     # URL with status monitoring
     STATUS_URL = None
@@ -175,6 +176,7 @@ Current translation status:
     SUGGESTION_CLEANUP_DAYS = None
     COMMENT_CLEANUP_DAYS = None
     REPOSITORY_ALERT_THRESHOLD = 25
+    BACKGROUND_TASKS = "monthly"
 
     SINGLE_PROJECT = False
     LICENSE_EXTRA = []

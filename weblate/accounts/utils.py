@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -21,6 +21,7 @@ import os
 
 from django.conf import settings
 from django.contrib.auth import update_session_auth_hash
+from rest_framework.authtoken.models import Token
 from social_django.models import Code
 
 from weblate.accounts.models import AuditLog, VerifiedEmail
@@ -40,12 +41,12 @@ def remove_user(user, request):
     invalidate_reset_codes(user)
 
     # Change username
-    user.username = "deleted-{0}".format(user.pk)
-    user.email = "noreply+{}@weblate.org".format(user.pk)
+    user.username = f"deleted-{user.pk}"
+    user.email = f"noreply+{user.pk}@weblate.org"
     while User.objects.filter(username=user.username).exists():
-        user.username = "deleted-{0}-{1}".format(user.pk, os.urandom(5).hex())
+        user.username = "deleted-{}-{}".format(user.pk, os.urandom(5).hex())
     while User.objects.filter(email=user.email).exists():
-        user.email = "noreply+{0}-{1}@weblate.org".format(user.pk, os.urandom(5).hex())
+        user.email = "noreply+{}-{}@weblate.org".format(user.pk, os.urandom(5).hex())
 
     # Remove user information
     user.full_name = "Deleted User"
@@ -63,6 +64,23 @@ def remove_user(user, request):
 
     # Remove user translation memory
     user.memory_set.all().delete()
+
+    # Cleanup profile
+    profile = user.profile
+    profile.website = ""
+    profile.liberapay = ""
+    profile.fediverse = ""
+    profile.codesite = ""
+    profile.github = ""
+    profile.twitter = ""
+    profile.linkedin = ""
+    profile.location = ""
+    profile.company = ""
+    profile.public_email = ""
+    profile.save()
+
+    # Delete API tokens
+    Token.objects.filter(user=request.user).delete()
 
 
 def get_all_user_mails(user, entries=None):

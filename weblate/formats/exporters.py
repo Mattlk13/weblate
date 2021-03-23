@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -36,7 +36,7 @@ from translate.storage.tbx import tbxfile
 from translate.storage.tmx import tmxfile
 from translate.storage.xliff import xlifffile
 
-import weblate
+import weblate.utils.version
 from weblate.formats.external import XlsxFormat
 from weblate.formats.ttkit import TTKitFormat
 from weblate.trans.util import split_plural, xliff_string_to_rich
@@ -107,18 +107,15 @@ class BaseExporter:
     def add(self, unit, word):
         unit.target = word
 
-    def add_glossary_term(self, word):
-        """Add glossary term."""
-        unit = self.storage.UnitClass(self.string_filter(word.source))
-        self.add(unit, self.string_filter(word.target))
-        self.storage.addunit(unit)
+    def create_unit(self, source):
+        return self.storage.UnitClass(source)
 
     def add_units(self, units):
         for unit in units:
             self.add_unit(unit)
 
     def build_unit(self, unit):
-        output = self.storage.UnitClass(self.handle_plurals(unit.get_source_plurals()))
+        output = self.create_unit(self.handle_plurals(unit.get_source_plurals()))
         self.add(output, self.handle_plurals(unit.get_target_plurals()))
         return output
 
@@ -127,6 +124,9 @@ class BaseExporter:
 
     def add_unit(self, unit):
         output = self.build_unit(unit)
+        # Propagate source language
+        if hasattr(output, "setsource"):
+            output.setsource(output.source, sourcelang=self.source_language.code)
         # Location needs to be set prior to ID to avoid overwrite
         # on some formats (for example xliff)
         for location in unit.location.split():
@@ -181,10 +181,8 @@ class BaseExporter:
             extension=self.extension,
         )
 
-        response = HttpResponse(
-            content_type="{0}; charset=utf-8".format(self.content_type)
-        )
-        response["Content-Disposition"] = "attachment; filename={0}".format(filename)
+        response = HttpResponse(content_type=f"{self.content_type}; charset=utf-8")
+        response["Content-Disposition"] = f"attachment; filename={filename}"
 
         # Save to response
         response.write(self.serialize())
@@ -218,18 +216,22 @@ class PoExporter(BaseExporter):
         store.updateheader(
             add=True,
             language=self.language.code,
-            x_generator="Weblate {0}".format(weblate.VERSION),
-            project_id_version="{0} ({1})".format(
-                self.language.name, self.project.name
-            ),
+            x_generator=f"Weblate {weblate.utils.version.VERSION}",
+            project_id_version=f"{self.language.name} ({self.project.name})",
             plural_forms=plural.plural_form,
-            language_team="{0} <{1}>".format(self.language.name, self.url),
+            language_team=f"{self.language.name} <{self.url}>",
         )
         return store
 
 
 class XMLExporter(BaseExporter):
     """Wrapper for XML based exporters to strip control characters."""
+
+    def get_storage(self):
+        return self.storage_class(
+            sourcelanguage=self.source_language.code,
+            targetlanguage=self.language.code,
+        )
 
     def string_filter(self, text):
         return text.translate(_CHARMAP)
@@ -262,7 +264,7 @@ class PoXliffExporter(XMLExporter):
         try:
             converted_source = xliff_string_to_rich(unit.get_source_plurals())
             converted_target = xliff_string_to_rich(unit.get_target_plurals())
-        except (XMLSyntaxError, TypeError):
+        except (XMLSyntaxError, TypeError, KeyError):
             return output
         output.rich_source = converted_source
         output.set_rich_target(converted_target, self.language.code)
@@ -346,7 +348,7 @@ class MoExporter(PoExporter):
             source = self.handle_plurals(unit.get_source_plurals())
             context = unit.context
         # Actually create the unit and set attributes
-        output = self.storage.UnitClass(source)
+        output = self.create_unit(source)
         output.target = self.handle_plurals(unit.get_target_plurals())
         if context:
             # The setcontext doesn't work on mounit
@@ -383,7 +385,7 @@ class CSVExporter(CVSBaseExporter):
         Reverse for this is in weblate.formats.ttkit.CSVUnit.unescape_csv
         """
         if text and text[0] in ("=", "+", "-", "@", "|", "%"):
-            return "'{0}'".format(text.replace("|", "\\|"))
+            return "'{}'".format(text.replace("|", "\\|"))
         return text
 
 
@@ -391,7 +393,7 @@ class XlsxExporter(CVSBaseExporter):
     name = "xlsx"
     content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     extension = "xlsx"
-    verbose = _("Excel Open XML")
+    verbose = _("XLSX")
 
     def serialize(self):
         """Return storage content."""
@@ -406,7 +408,7 @@ class MonolingualExporter(BaseExporter):
         return translation.component.has_template()
 
     def build_unit(self, unit):
-        output = self.storage.UnitClass(unit.context)
+        output = self.create_unit(unit.context)
         output.setid(unit.context)
         self.add(output, self.handle_plurals(unit.get_target_plurals()))
         return output
@@ -450,3 +452,6 @@ class StringsExporter(MonolingualExporter):
     content_type = "text/plain"
     extension = "strings"
     verbose = _("iOS strings")
+
+    def create_unit(self, source):
+        return self.storage.UnitClass(source, self.storage.personality.name)

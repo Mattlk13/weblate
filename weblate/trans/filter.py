@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -52,6 +52,11 @@ class FilterRegistry:
                 _("Translated strings with any failing checks"),
                 "has:check AND state:>=translated",
             ),
+            (
+                "dismissed_checks",
+                _("Translated strings with dismissed checks"),
+                "has:dismissed-check",
+            ),
             ("approved", _("Approved strings"), "state:approved"),
             (
                 "approved_suggestions",
@@ -66,7 +71,7 @@ class FilterRegistry:
             (
                 CHECKS[check].url_id,
                 format_lazy(_("Failed check: {}"), CHECKS[check].name),
-                "check:{}".format(check),
+                f"check:{check}",
             )
             for check in CHECKS
         )
@@ -132,7 +137,7 @@ def get_filter_choice(project=None):
     )
     if project is not None:
         result.extend(
-            ("label:{}".format(label), format_lazy(_("Labeled: {}"), label))
+            (f"label:{label}", format_lazy(_("Labeled: {}"), label))
             for label in project.label_set.values_list("name", flat=True)
         )
     return result

@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -21,7 +21,7 @@ import json
 
 from django.conf import settings
 
-import weblate
+import weblate.utils.version
 from weblate.machinery.base import (
     MachineTranslation,
     MachineTranslationError,
@@ -46,7 +46,7 @@ class ModernMTTranslation(MachineTranslation):
         return {
             "MMT-ApiKey": settings.MT_MODERNMT_KEY,
             "MMT-Platform": "Weblate",
-            "MMT-PlatformVersion": weblate.VERSION,
+            "MMT-PlatformVersion": weblate.utils.version.VERSION,
         }
 
     def is_supported(self, source, language):
@@ -61,7 +61,16 @@ class ModernMTTranslation(MachineTranslation):
         for source, targets in payload["data"].items():
             yield from ((source, target) for target in targets)
 
-    def download_translations(self, source, language, text, unit, user, search):
+    def download_translations(
+        self,
+        source,
+        language,
+        text: str,
+        unit,
+        user,
+        search: bool,
+        threshold: int = 75,
+    ):
         """Download list of possible translations from a service."""
         response = self.request(
             "get",

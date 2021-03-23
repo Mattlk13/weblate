@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -19,6 +19,7 @@
 
 from datetime import date
 
+from django.conf import settings
 from django.db import transaction
 from django.utils.translation import gettext_lazy as _
 
@@ -40,19 +41,32 @@ class AutoTranslateAddon(BaseAddon):
     multiple = True
     icon = "language.svg"
 
+    def make_callback(self, translation):
+        def callback():
+            auto_translate.delay(None, translation.pk, **self.instance.configuration)
+
+        return callback
+
     def component_update(self, component):
-        self.daily(component)
-
-    def daily(self, component):
-        # Translate every component once in a week to reduce load
-        if component.id % 7 != date.today().weekday():
-            return
-
         for translation in component.translation_set.iterator():
             if translation.is_source:
                 continue
-            transaction.on_commit(
-                lambda: auto_translate.delay(
-                    None, translation.pk, **self.instance.configuration
-                )
-            )
+
+            transaction.on_commit(self.make_callback(translation))
+
+    def daily(self, component):
+        # Translate every component less frequenctly to reduce load.
+        # The translation is anyway triggered on update, so it should
+        # not matter that much that we run this less often.
+        if settings.BACKGROUND_TASKS == "never":
+            return
+        today = date.today()
+        if settings.BACKGROUND_TASKS == "monthly" and component.id % 30 != today.day:
+            return
+        if (
+            settings.BACKGROUND_TASKS == "weekly"
+            and component.id % 7 != today.weekday()
+        ):
+            return
+
+        self.component_update(component)

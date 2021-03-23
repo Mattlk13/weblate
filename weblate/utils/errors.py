@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -23,13 +23,12 @@ from typing import Dict, Optional
 
 import sentry_sdk
 from django.conf import settings
-from django.utils.encoding import force_str
 from sentry_sdk.integrations.celery import CeleryIntegration
 from sentry_sdk.integrations.django import DjangoIntegration
 from sentry_sdk.integrations.logging import ignore_logger
 from sentry_sdk.integrations.redis import RedisIntegration
 
-import weblate
+import weblate.utils.version
 
 ERROR_LOGGER = "weblate.errors"
 LOGGER = logging.getLogger(ERROR_LOGGER)
@@ -70,9 +69,9 @@ def report_error(
 
     error = sys.exc_info()[1]
 
-    log("%s: %s: %s", cause, error.__class__.__name__, force_str(error))
+    log("%s: %s: %s", cause, error.__class__.__name__, str(error))
     if extra_data:
-        log("%s: %s: %s", cause, error.__class__.__name__, force_str(extra_data))
+        log("%s: %s: %s", cause, error.__class__.__name__, str(extra_data))
     if print_tb:
         LOGGER.exception(cause)
 
@@ -87,13 +86,18 @@ def init_error_collection(celery=False):
             dsn=settings.SENTRY_DSN,
             integrations=[CeleryIntegration(), DjangoIntegration(), RedisIntegration()],
             send_default_pii=True,
-            release=weblate.GIT_REVISION or weblate.TAG_NAME,
+            release=weblate.utils.version.GIT_REVISION
+            or weblate.utils.version.TAG_NAME,
             environment=settings.SENTRY_ENVIRONMENT,
             **settings.SENTRY_EXTRA_ARGS,
         )
         # Ignore Weblate logging, those are reported using capture_exception
         ignore_logger(ERROR_LOGGER)
+        LOGGER.info(
+            "configured Sentry error collection, extras: %s", settings.SENTRY_EXTRA_ARGS
+        )
 
     if celery and HAS_ROLLBAR and hasattr(settings, "ROLLBAR"):
         rollbar.init(**settings.ROLLBAR)
         rollbar.BASE_DATA_HOOK = celery_base_data_hook
+        LOGGER.info("configured Rollbar error collection")

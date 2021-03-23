@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -32,7 +32,6 @@ from django.utils.http import urlencode
 from django.utils.translation import gettext as _
 from django.views.generic.edit import CreateView
 
-from weblate.formats.models import FILE_FORMATS
 from weblate.trans.forms import (
     ComponentBranchForm,
     ComponentCreateForm,
@@ -52,23 +51,6 @@ from weblate.utils.errors import report_error
 from weblate.utils.licenses import LICENSE_URLS
 from weblate.utils.views import create_component_from_doc, create_component_from_zip
 from weblate.vcs.models import VCS_REGISTRY
-
-
-def scratch_create_component(project, name, slug, source_language, file_format):
-    format_cls = FILE_FORMATS[file_format]
-    template = "{}.{}".format(source_language.code, format_cls.extension())
-    # Create component
-    return Component.objects.create(
-        file_format=file_format,
-        filemask="*.{}".format(format_cls.extension()),
-        template=template,
-        vcs="local",
-        repo="local:",
-        project=project,
-        source_language=source_language,
-        name=name,
-        slug=slug,
-    )
 
 
 class BaseCreateView(CreateView):
@@ -139,13 +121,13 @@ class CreateProject(BaseCreateView):
         if self.has_billing:
             from weblate.billing.models import Billing
 
-            billings = Billing.objects.get_valid().for_user(request.user)
+            billings = Billing.objects.get_valid().for_user(request.user).prefetch()
             pks = set()
             for billing in billings:
                 limit = billing.plan.display_limit_projects
                 if limit == 0 or billing.count_projects < limit:
                     pks.add(billing.pk)
-            self.billings = Billing.objects.filter(pk__in=pks)
+            self.billings = Billing.objects.filter(pk__in=pks).prefetch()
         return super().dispatch(request, *args, **kwargs)
 
 
@@ -228,6 +210,9 @@ class CreateComponent(BaseCreateView):
 
     def form_valid(self, form):
         if self.stage == "create":
+            form.instance.manage_units = (
+                bool(form.instance.template) or form.instance.file_format == "tbx"
+            )
             result = super().form_valid(form)
             self.object.post_create(self.request.user)
             return result
@@ -282,11 +267,11 @@ class CreateComponent(BaseCreateView):
         elif self.has_billing:
             from weblate.billing.models import Billing
 
-            self.projects = request.user.owned_projects.filter(
+            self.projects = request.user.managed_projects.filter(
                 billing__in=Billing.objects.get_valid()
             ).order()
         else:
-            self.projects = request.user.owned_projects
+            self.projects = request.user.managed_projects
         self.initial = {}
         for field in self.basic_fields:
             if field in request.GET:
@@ -332,6 +317,7 @@ class CreateFromZip(CreateComponent):
         self.initial = form.cleaned_data
         self.initial["vcs"] = "local"
         self.initial["repo"] = "local:"
+        self.initial["branch"] = "main"
         self.initial.pop("zipfile")
         self.request.method = "GET"
         return self.get(self, self.request)
@@ -351,6 +337,7 @@ class CreateFromDoc(CreateComponent):
         self.initial = form.cleaned_data
         self.initial["vcs"] = "local"
         self.initial["repo"] = "local:"
+        self.initial["branch"] = "main"
         self.initial.pop("docfile")
         self.request.method = "GET"
         return self.get(self, self.request)
@@ -386,6 +373,7 @@ class CreateComponentSelection(CreateComponent):
             .with_repo()
             .prefetch()
             .filter(project__in=self.projects)
+            .order_project()
         )
         if self.selected_project:
             self.components = self.components.filter(project__pk=self.selected_project)
@@ -418,7 +406,7 @@ class CreateComponentSelection(CreateComponent):
         if isinstance(form, ComponentBranchForm):
             form.fields["component"].queryset = Component.objects.filter(
                 pk__in=self.branch_data.keys()
-            )
+            ).order_project()
             form.branch_data = self.branch_data
         elif isinstance(form, ComponentSelectForm):
             form.fields["component"].queryset = self.components
@@ -438,7 +426,8 @@ class CreateComponentSelection(CreateComponent):
 
     def form_valid(self, form):
         if self.origin == "scratch":
-            component = scratch_create_component(**form.cleaned_data)
+            project = form.cleaned_data["project"]
+            component = project.scratch_create_component(**form.cleaned_data)
             return redirect(
                 reverse("component_progress", kwargs=component.get_reverse_url_kwargs())
             )

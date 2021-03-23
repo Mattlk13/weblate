@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -30,6 +30,7 @@ class VCSConf(AppConf):
         "weblate.vcs.git.SubversionRepository",
         "weblate.vcs.git.GithubRepository",
         "weblate.vcs.git.GitLabRepository",
+        "weblate.vcs.git.PagureRepository",
         "weblate.vcs.git.LocalRepository",
         "weblate.vcs.git.GitForcePushRepository",
         "weblate.vcs.mercurial.HgRepository",
@@ -45,6 +46,11 @@ class VCSConf(AppConf):
     GITLAB_USERNAME = None
     GITLAB_TOKEN = None
     GITLAB_CREDENTIALS = {}
+
+    # GitLab username for sending merge requests
+    PAGURE_USERNAME = None
+    PAGURE_TOKEN = None
+    PAGURE_CREDENTIALS = {}
 
     class Meta:
         prefix = ""

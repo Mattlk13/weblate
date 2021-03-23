@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -78,9 +78,9 @@ def borg(cmd, env=None):
             env=get_clean_env(env),
             universal_newlines=True,
         )
-    except EnvironmentError as error:
+    except OSError as error:
         report_error()
-        raise BackupError("Could not execute borg program: {}".format(error))
+        raise BackupError(f"Could not execute borg program: {error}")
     except subprocess.CalledProcessError as error:
         report_error(extra_data={"stdout": error.stdout})
         raise BackupError(error.stdout)
@@ -118,7 +118,7 @@ def backup(location, passphrase):
             "*/.config/borg",
             "--compression",
             "auto,zstd",
-            "{}::{{now}}".format(location),
+            f"{location}::{{now}}",
             settings.DATA_DIR,
         ],
         {"BORG_PASSPHRASE": passphrase},

@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -16,9 +16,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-
-
-from collections import defaultdict
 
 from appconf import AppConf
 from django.db import models
@@ -74,11 +71,6 @@ class AddonQuerySet(models.QuerySet):
         )
 
     def filter_event(self, component, event):
-        if component.addons_cache is None:
-            component.addons_cache = defaultdict(list)
-            for addon in self.filter_component(component):
-                for installed in addon.event_set.all():
-                    component.addons_cache[installed.event].append(addon)
         return component.addons_cache[event]
 
 
@@ -97,7 +89,7 @@ class Addon(models.Model):
         verbose_name_plural = "add-ons"
 
     def __str__(self):
-        return "{}: {}".format(self.addon.verbose, self.component)
+        return f"{self.addon.verbose}: {self.component}"
 
     def get_absolute_url(self):
         return reverse(
@@ -135,7 +127,7 @@ class Event(models.Model):
         verbose_name_plural = "add-on events"
 
     def __str__(self):
-        return "{}: {}".format(self.addon, self.get_event_display())
+        return f"{self.addon}: {self.get_event_display()}"
 
 
 class AddonsConf(AppConf):
@@ -147,6 +139,7 @@ class AddonsConf(AppConf):
         "weblate.addons.gettext.GettextCustomizeAddon",
         "weblate.addons.gettext.GettextAuthorComments",
         "weblate.addons.cleanup.CleanupAddon",
+        "weblate.addons.cleanup.RemoveBlankAddon",
         "weblate.addons.consistency.LangaugeConsistencyAddon",
         "weblate.addons.discovery.DiscoveryAddon",
         "weblate.addons.autotranslate.AutoTranslateAddon",
@@ -155,6 +148,7 @@ class AddonsConf(AppConf):
         "weblate.addons.flags.SameEditAddon",
         "weblate.addons.flags.BulkEditAddon",
         "weblate.addons.generate.GenerateFileAddon",
+        "weblate.addons.generate.PseudolocaleAddon",
         "weblate.addons.json.JSONCustomizeAddon",
         "weblate.addons.properties.PropertiesSortAddon",
         "weblate.addons.git.GitSquashAddon",
@@ -201,13 +195,20 @@ def post_push(sender, component, **kwargs):
 
 
 @receiver(vcs_post_update)
-def post_update(sender, component, previous_head, child=False, **kwargs):
+def post_update(
+    sender,
+    component,
+    previous_head: str,
+    child: bool = False,
+    skip_push: bool = False,
+    **kwargs,
+):
     for addon in Addon.objects.filter_event(component, EVENT_POST_UPDATE):
         if child and addon.repo_scope:
             continue
         component.log_debug("running post_update addon: %s", addon.name)
         try:
-            addon.addon.post_update(component, previous_head)
+            addon.addon.post_update(component, previous_head, skip_push)
         except Exception:
             handle_addon_error(addon, component)
 

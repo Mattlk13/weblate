@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -193,8 +193,12 @@ class EndStopCheck(TargetCheck):
             )
         if self.is_language(unit, ("hi", "bn", "or")):
             # Using | instead of । is not typographically correct, but
-            # seems to be quite usual
-            return self.check_chars(source, target, -1, (".", "।", "|"))
+            # seems to be quite usual. \u0964 is correct, but \u09F7
+            # is also sometimes used instead in some popular editors.
+            return self.check_chars(source, target, -1, (".", "\u0964", "\u09F7", "|"))
+        if self.is_language(unit, ("sat",)):
+            # Santali uses "᱾" as full stop
+            return self.check_chars(source, target, -1, (".", "᱾"))
         return self.check_chars(
             source, target, -1, (".", "。", "।", "۔", "։", "·", "෴", "។")
         )
@@ -356,7 +360,7 @@ class MaxLengthCheck(TargetCheckParametrized):
 
     def check_target_params(self, sources, targets, unit, value):
         replace = self.get_replacement_function(unit)
-        return any((len(replace(target)) > value for target in targets))
+        return any(len(replace(target)) > value for target in targets)
 
 
 class EndSemicolonCheck(TargetCheck):
@@ -370,7 +374,9 @@ class EndSemicolonCheck(TargetCheck):
         if self.is_language(unit, ("el",)) and source and source[-1] == "?":
             # Complement to question mark check
             return False
-        return self.check_chars(source, target, -1, [";"])
+        return self.check_chars(
+            strip_entities(source), strip_entities(target), -1, [";"]
+        )
 
 
 class KashidaCheck(TargetCheck):
@@ -379,7 +385,7 @@ class KashidaCheck(TargetCheck):
     description = _("The decorative kashida letters should not be used")
 
     def check_single(self, source, target, unit):
-        return any((x in target for x in KASHIDA_CHARS))
+        return any(x in target for x in KASHIDA_CHARS)
 
     def get_fixup(self, unit):
         return [("[{}]".format("".join(KASHIDA_CHARS)), "", "gu")]

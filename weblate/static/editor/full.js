@@ -20,7 +20,7 @@
       var $el = $(e.target);
       var text = $el.parent().parent().data("raw").text;
 
-      this.$translationArea.val(text).change();
+      this.$translationArea.replaceValue(text);
       autosize.update(this.$translationArea);
       WLT.Utils.markFuzzy(this.$translationForm);
     });
@@ -30,7 +30,7 @@
       var $el = $(e.target);
       var text = $el.parent().parent().data("raw").text;
 
-      this.$translationArea.val(text).change();
+      this.$translationArea.replaceValue(text);
       autosize.update(this.$translationArea);
       WLT.Utils.markTranslated(this.$translationForm);
       submitForm({ target: this.$translationArea });
@@ -40,11 +40,14 @@
       window.location = $("#button-end").attr("href");
       return false;
     });
-    Mousetrap.bindGlobal("alt+pagedown", function (e) {
-      window.location = $("#button-next").attr("href");
-      return false;
-    });
-    Mousetrap.bindGlobal("alt+pageup", function (e) {
+    Mousetrap.bindGlobal(
+      ["alt+pagedown", "mod+down", "alt+down"],
+      function (e) {
+        window.location = $("#button-next").attr("href");
+        return false;
+      }
+    );
+    Mousetrap.bindGlobal(["alt+pageup", "mod+up", "alt+up"], function (e) {
       window.location = $("#button-prev").attr("href");
       return false;
     });
@@ -83,7 +86,7 @@
       return false;
     });
     Mousetrap.bindGlobal("mod+m", function (e) {
-      $('.nav [href="#machine"]').click();
+      $('.nav [href="#machinery"]').click();
       return false;
     });
   }
@@ -270,7 +273,7 @@
         $(this)
           .find(".machinery-number")
           .html(' <kbd title="' + title + '">' + key + "</kbd>");
-        Mousetrap.bindGlobal("mod+m " + key, function () {
+        Mousetrap.bindGlobal(["mod+m " + key, "mod+m mod+" + key], function () {
           $translationRows.eq(idx).find(".js-copy-machinery").click();
           return false;
         });
@@ -325,7 +328,7 @@
         var $this = $(this);
         $.each(fixups, function (key, value) {
           var re = new RegExp(value[0], value[2]);
-          $this.val($this.val().replace(re, value[1]));
+          $this.replaceValue($this.val().replace(re, value[1]));
         });
       });
       return false;
@@ -343,8 +346,12 @@
 
     $checks.each(function (idx) {
       var $this = $(this);
+      let $number = $(this).find(".check-number");
 
       if (idx < 10) {
+        if ($number.length === 0) {
+          return;
+        }
         let key = WLT.Utils.getNumericKey(idx);
 
         var title;
@@ -358,23 +365,30 @@
             [key]
           );
         }
-        $(this)
-          .find(".check-number")
-          .html(' <kbd title="' + title + '">' + key + "</kbd>");
+        $number.html(' <kbd title="' + title + '">' + key + "</kbd>");
 
-        Mousetrap.bindGlobal("mod+i " + key, function (e) {
-          $this.find(".check-dismiss-single").click();
-          return false;
-        });
+        Mousetrap.bindGlobal(
+          ["mod+i " + key, "mod+i mod+" + key],
+          function (e) {
+            $this.find(".check-dismiss-single").click();
+            return false;
+          }
+        );
       } else {
-        $(this).find(".check-number").html("");
+        $number.html("");
       }
     });
   };
 
   FullEditor.prototype.initGlossary = function () {
     /* Copy from glossary */
-    this.$editor.on("click", ".glossary-embed", (e) => {
+    this.$editor.on("click", ".glossary-embed.clickable-row", (e) => {
+      /* Avoid copy when clicked on a link */
+      if ($(e.target).parents("a").length > 0) {
+        return;
+      }
+      console.log(e.target);
+      console.log(e.currentTarget);
       var text = $(e.currentTarget).find(".target").text();
 
       this.insertIntoTranslation(text);
@@ -395,6 +409,7 @@
       var $form = $(e.currentTarget);
 
       increaseLoading("glossary-add");
+      $glossaryDialog.modal("hide");
       $.ajax({
         type: "POST",
         url: $form.attr("action"),
@@ -412,16 +427,13 @@
           addAlert(errorThrown);
           decreaseLoading("glossary-add");
         },
-        complete: function () {
-          $glossaryDialog.modal("hide");
-        },
       });
       return false;
     });
   };
 
   FullEditor.prototype.insertIntoTranslation = function (text) {
-    this.$translationArea.insertAtCaret($.trim(text)).change();
+    this.$translationArea.insertAtCaret($.trim(text));
   };
 
   class Machinery {
@@ -515,7 +527,7 @@
       var $translations = $("#machinery-translations");
       translations.forEach((translation) => {
         var service = this.renderService(translation);
-        var insertBefore;
+        var insertBefore = null;
         var done = false;
 
         /* This is the merging and insert sort logic */
@@ -532,7 +544,7 @@
             current.append(service.html());
             done = true;
             return false;
-          } else if (base.quality <= translation.quality) {
+          } else if (base.quality <= translation.quality && !insertBefore) {
             // Insert match before lower quality one
             insertBefore = $this;
           }

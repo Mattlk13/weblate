@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -21,7 +21,7 @@
 import codecs
 import shutil
 from io import BytesIO
-from typing import List, Union
+from typing import List, Optional, Union
 from zipfile import ZipFile
 
 from django.utils.functional import cached_property
@@ -61,6 +61,10 @@ class ConvertUnit(TTKitUnit):
         """Check whether unit needs editing."""
         return fallback
 
+    def is_approved(self, fallback=False):
+        """Check whether unit is appoved."""
+        return fallback
+
     @cached_property
     def locations(self):
         return ""
@@ -69,6 +73,20 @@ class ConvertUnit(TTKitUnit):
     def context(self):
         """Return context of message."""
         return "".join(self.mainunit.getlocations())
+
+
+class ConvertXliffUnit(XliffUnit):
+    def is_fuzzy(self, fallback=False):
+        """Check whether unit needs editing."""
+        return fallback
+
+    def is_approved(self, fallback=False):
+        """Check whether unit is appoved."""
+        return fallback
+
+    def is_translated(self):
+        """Check whether unit is translated."""
+        return self.unit is not None
 
 
 class ConvertFormat(TranslationFormat):
@@ -80,6 +98,7 @@ class ConvertFormat(TranslationFormat):
 
     monolingual = True
     can_add_unit = False
+    needs_target_sync = True
     unit_class = ConvertUnit
     autoaddon = {"weblate.flags.same_edit": {}}
 
@@ -92,21 +111,23 @@ class ConvertFormat(TranslationFormat):
         self.save_atomic(self.storefile, self.save_content)
 
     @staticmethod
-    def convertfile(storefile):
+    def convertfile(storefile, template_store):
         raise NotImplementedError()
 
     @classmethod
-    def load(cls, storefile):
+    def load(cls, storefile, template_store):
         # Did we get file or filename?
         if not hasattr(storefile, "read"):
             storefile = open(storefile, "rb")
         # Adjust store to have translations
-        store = cls.convertfile(storefile)
+        store = cls.convertfile(storefile, template_store)
         for unit in store.units:
             if unit.isheader():
                 continue
-            unit.target = unit.source
-            unit.rich_target = unit.rich_source
+            # HTML does this properly on loading, others need it
+            if cls.needs_target_sync:
+                unit.target = unit.source
+                unit.rich_target = unit.rich_source
         return store
 
     @classmethod
@@ -118,12 +139,19 @@ class ConvertFormat(TranslationFormat):
         shutil.copy(base, filename)
 
     @classmethod
-    def is_valid_base_for_new(cls, base, monolingual):
+    def is_valid_base_for_new(
+        cls,
+        base: str,
+        monolingual: bool,
+        errors: Optional[List] = None,
+        fast: bool = False,
+    ) -> bool:
         """Check whether base is valid."""
         if not base:
             return False
         try:
-            cls.load(base)
+            if not fast:
+                cls.load(base, None)
             return True
         except Exception:
             report_error(cause="File parse error")
@@ -139,22 +167,44 @@ class ConvertFormat(TranslationFormat):
     def create_unit(self, key: str, source: Union[str, List[str]]):
         raise ValueError("Not supported")
 
+    def cleanup_unused(self) -> List[str]:
+        """
+        Bring target in sync with the source.
+
+        This is done automatically on save as it reshapes translations
+        based on the template.
+        """
+        self.save()
+        return []
+
 
 class HTMLFormat(ConvertFormat):
     name = _("HTML file")
     autoload = ("*.htm", "*.html")
     format_id = "html"
     check_flags = ("safe-html", "strict-same")
+    needs_target_sync = False
 
     @staticmethod
-    def convertfile(storefile):
+    def convertfile(storefile, template_store):
         store = pofile()
         # Fake input file with a blank filename
-        htmlparser = htmlfile(
-            includeuntaggeddata=False, inputfile=BytesIOMode("", storefile.read())
-        )
+        htmlparser = htmlfile(inputfile=BytesIOMode("", storefile.read()))
         for htmlunit in htmlparser.units:
-            thepo = store.addsourceunit(htmlunit.source)
+            locations = htmlunit.getlocations()
+            if template_store:
+                # Transalation
+                template = template_store.find_unit_mono("".join(locations))
+                if template is None:
+                    # Skip locations not present in the source HTML file
+                    continue
+                # Create unit with matching source
+                thepo = store.addsourceunit(template.source)
+                thepo.target = htmlunit.source
+            else:
+                # Source file
+                thepo = store.addsourceunit(htmlunit.source)
+                thepo.target = htmlunit.source
             thepo.addlocations(htmlunit.getlocations())
             thepo.addnote(htmlunit.getnotes(), "developer")
         store.removeduplicates("msgctxt")
@@ -206,10 +256,10 @@ class OpenDocumentFormat(ConvertFormat):
     )
     format_id = "odf"
     check_flags = ("strict-same",)
-    unit_class = XliffUnit
+    unit_class = ConvertXliffUnit
 
     @staticmethod
-    def convertfile(storefile):
+    def convertfile(storefile, template_store):
         store = xlifffile()
         store.setfilename(store.getfilenode("NoName"), "odf")
         contents = open_odf(storefile)
@@ -250,7 +300,7 @@ class IDMLFormat(ConvertFormat):
     check_flags = ("strict-same",)
 
     @staticmethod
-    def convertfile(storefile):
+    def convertfile(storefile, template_store):
         store = pofile()
 
         contents = open_idml(storefile)
@@ -314,7 +364,7 @@ class WindowsRCFormat(ConvertFormat):
         return "rc"
 
     @staticmethod
-    def convertfile(storefile):
+    def convertfile(storefile, template_store):
 
         input_store = rcfile(storefile)
         convertor = rc2po()
@@ -338,11 +388,21 @@ class WindowsRCFormat(ConvertFormat):
         templatename = self.template_store.storefile
         if hasattr(templatename, "name"):
             templatename = templatename.name
+        encoding = "utf-8"
         with open(templatename, "rb") as templatefile:
-            convertor = rerc(templatefile, lang=lang, sublang=sublang)
+            bom = templatefile.read(2)
+            if bom == codecs.BOM_UTF16_LE or b"\000" in bom:
+                encoding = "utf-16-le"
+            templatefile.seek(0)
+            convertor = rerc(
+                templatefile,
+                lang=lang,
+                sublang=sublang,
+                charset=encoding,
+            )
             outputrclines = convertor.convertstore(self.store)
             try:
-                handle.write(outputrclines.encode("cp1252"))
+                handle.write(outputrclines.encode(encoding))
             except UnicodeEncodeError:
                 handle.write(codecs.BOM_UTF16_LE)
                 handle.write(outputrclines.encode("utf-16-le"))

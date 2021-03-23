@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -237,6 +237,10 @@ class ComponentTest(RepoTestCase):
             translation.unit_set.get(context="thanks").source,
             "Thank you for using Weblate.",
         )
+        # Verify source units
+        unit = component.source_translation.unit_set.get(context="hello")
+        self.assertEqual(unit.source, "Hello world!\n")
+        self.assertEqual(unit.target, "Hello, world!\n")
 
     def test_switch_json_intermediate(self):
         component = self._create_component(
@@ -375,6 +379,14 @@ class ComponentTest(RepoTestCase):
         component = self.create_odt()
         self.verify_component(component, 2, "cs", 4, unit="Hello, world!")
 
+    def test_create_winrc(self):
+        component = self.create_winrc()
+        self.verify_component(component, 2, "cs-CZ", 4)
+
+    def test_create_tbx(self):
+        component = self.create_tbx()
+        self.verify_component(component, 2, "cs", 4, unit="address bar")
+
     def test_link(self):
         component = self.create_link()
         self.verify_component(component, 4, "cs", 4)
@@ -449,7 +461,7 @@ class ComponentTest(RepoTestCase):
         component = self.create_component()
         self.assertEqual(Check.objects.count(), 3)
         check = Check.objects.all()[0]
-        component.check_flags = "ignore-{0}".format(check.check)
+        component.check_flags = f"ignore-{check.check}"
         component.save()
         self.assertEqual(Check.objects.count(), 0)
 
@@ -490,7 +502,7 @@ class ComponentDeleteTest(RepoTestCase):
         self.assertTrue(os.path.exists(component.full_path))
         component.delete()
         self.assertFalse(os.path.exists(component.full_path))
-        self.assertEqual(0, Component.objects.count())
+        self.assertEqual(1, Component.objects.count())
 
     def test_delete_link(self):
         component = self.create_link()
@@ -750,8 +762,9 @@ class ComponentValidationTest(RepoTestCase):
         self.assertEqual(component.get_lang_code("Solution/Project/Resources.resx"), "")
         # Language aliases
         self.assertEqual(
-            component.get_lang_code("Solution/Project/Resources.xx.resx"), "cs"
+            component.get_lang_code("Solution/Project/Resources.xx.resx"), "xx"
         )
+        self.assertEqual(component.get_language_alias("xx"), "cs")
         self.assertRaisesMessage(
             ValidationError,
             "The language code for "
@@ -780,6 +793,14 @@ class ComponentValidationTest(RepoTestCase):
         self.assertEqual(
             component.get_lang_code("path/el/resources/MessagesBundle_el.properties"),
             "el",
+        )
+
+    def test_lang_code_plus(self):
+        component = Component(project=Project())
+        component.filemask = "po/*/master/pages/C_and_C++.po"
+        self.assertEqual(
+            component.get_lang_code("po/cs/master/pages/C_and_C++.po"),
+            "cs",
         )
 
 
@@ -815,6 +836,7 @@ class ComponentErrorTest(RepoTestCase):
 
     def test_invalid_templatename(self):
         self.component.template = "foo.bar"
+        self.component.drop_template_store_cache()
 
         with self.assertRaises(FileParseError):
             self.component.template_store
@@ -844,6 +866,7 @@ class ComponentErrorTest(RepoTestCase):
         testfile = os.path.join(self.component.full_path, "ts-mono", "en.ts")
         with open(testfile, "a") as handle:
             handle.write("CHANGE")
+        self.component.drop_template_store_cache()
 
         with self.assertRaises(FileParseError):
             self.component.template_store

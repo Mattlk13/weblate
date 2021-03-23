@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -17,50 +17,14 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-from django.utils.functional import cached_property
 from django.utils.translation import gettext_lazy as _
 
 from weblate.addons.base import UpdateBaseAddon
+from weblate.addons.events import EVENT_POST_COMMIT, EVENT_POST_UPDATE, EVENT_PRE_COMMIT
+from weblate.trans.exceptions import FileParseError
 
 
 class BaseCleanupAddon(UpdateBaseAddon):
-    @cached_property
-    def template_store(self):
-        return self.instance.component.template_store.store
-
-    @staticmethod
-    def build_index(storage):
-        index = {}
-
-        for unit in storage.units:
-            index[unit.getid()] = unit
-
-        return index
-
-    def build_indexes(self):
-        index = self.build_index(self.template_store)
-        if self.instance.component.intermediate:
-            intermediate = self.build_index(
-                self.instance.component.intermediate_store.store
-            )
-        else:
-            intermediate = {}
-        return index, intermediate
-
-    @staticmethod
-    def get_index(index, intermediate, translation):
-        if intermediate and translation.is_source:
-            return intermediate
-        return index
-
-    @staticmethod
-    def iterate_translations(component):
-        yield from (
-            translation
-            for translation in component.translation_set.iterator()
-            if not translation.is_source or component.intermediate
-        )
-
     @classmethod
     def can_install(cls, component, user):
         if not component.has_template():
@@ -77,8 +41,34 @@ class CleanupAddon(BaseCleanupAddon):
         "no longer present in the base file."
     )
     icon = "eraser.svg"
+    events = (EVENT_PRE_COMMIT, EVENT_POST_UPDATE)
 
     def update_translations(self, component, previous_head):
         for translation in self.iterate_translations(component):
-            filenames = translation.store.cleanup()
+            filenames = translation.store.cleanup_unused()
             self.extra_files.extend(filenames)
+
+    def pre_commit(self, translation, author):
+        if translation.is_source and not translation.component.intermediate:
+            return
+        try:
+            filenames = translation.store.cleanup_unused()
+        except FileParseError:
+            return
+        self.extra_files.extend(filenames)
+
+
+class RemoveBlankAddon(BaseCleanupAddon):
+    name = "weblate.cleanup.blank"
+    verbose = _("Remove blank strings")
+    description = _("Removes strings without a translation from translation files.")
+    events = (EVENT_POST_COMMIT, EVENT_POST_UPDATE)
+    icon = "eraser.svg"
+
+    def update_translations(self, component, previous_head):
+        for translation in self.iterate_translations(component):
+            filenames = translation.store.cleanup_blank()
+            self.extra_files.extend(filenames)
+
+    def post_commit(self, component):
+        self.post_update(component, None, skip_push=True)

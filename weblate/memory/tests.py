@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -20,7 +20,6 @@
 import json
 from io import StringIO
 
-from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.urls import reverse
@@ -30,9 +29,11 @@ from weblate_schemas import load_schema
 from weblate.lang.models import Language
 from weblate.memory.machine import WeblateMemory
 from weblate.memory.models import Memory
+from weblate.memory.tasks import handle_unit_translation_change, import_memory
 from weblate.memory.utils import CATEGORY_FILE
 from weblate.trans.tests.test_views import FixtureTestCase
 from weblate.trans.tests.utils import get_test_file
+from weblate.utils.db import using_postgresql
 
 
 def add_document():
@@ -54,7 +55,7 @@ class MemoryModelTest(FixtureTestCase):
         # well inside a transaction, so we avoid using transactions for
         # tests. Otherwise we end up with no matches for the query.
         # See https://dev.mysql.com/doc/refman/5.6/en/innodb-fulltext-index.html
-        if settings.DATABASES["default"]["ENGINE"] == "django.db.backends.mysql":
+        if not using_postgresql():
             return False
         return super()._databases_support_transactions()
 
@@ -74,6 +75,14 @@ class MemoryModelTest(FixtureTestCase):
                 }
             ],
         )
+
+    def test_machine_batch(self):
+        add_document()
+        unit = self.get_unit()
+        machine_translation = WeblateMemory()
+        unit.source = "Hello"
+        machine_translation.batch_translate([unit])
+        self.assertEqual(unit.machinery, {"best": 100, "translation": "Ahoj"})
 
     def test_import_tmx_command(self):
         call_command("import_memory", get_test_file("memory.tmx"))
@@ -127,6 +136,19 @@ class MemoryModelTest(FixtureTestCase):
         with self.assertRaises(CommandError):
             call_command("import_memory", get_test_file("memory-empty.json"))
         self.assertEqual(Memory.objects.count(), 0)
+
+    def test_import_project(self):
+        import_memory(self.project.id)
+        self.assertEqual(Memory.objects.count(), 4)
+        import_memory(self.project.id)
+        self.assertEqual(Memory.objects.count(), 4)
+
+    def test_import_unit(self):
+        unit = self.get_unit()
+        handle_unit_translation_change(unit.id, self.user.id)
+        self.assertEqual(Memory.objects.count(), 3)
+        handle_unit_translation_change(unit.id, self.user.id)
+        self.assertEqual(Memory.objects.count(), 3)
 
 
 class MemoryViewTest(FixtureTestCase):

@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -18,6 +18,7 @@
 #
 
 from collections import defaultdict
+from itertools import chain
 
 from django.utils.translation import gettext_lazy as _
 
@@ -34,7 +35,15 @@ class GitSquashAddon(BaseAddon):
     description = _("Squash Git commits prior to pushing changes.")
     settings_form = GitSquashForm
     compat = {
-        "vcs": {"git", "gerrit", "subversion", "github", "gitlab", "git-force-push"}
+        "vcs": {
+            "git",
+            "gerrit",
+            "subversion",
+            "github",
+            "pagure",
+            "gitlab",
+            "git-force-push",
+        }
     }
     events = (EVENT_POST_COMMIT,)
     icon = "compress.svg"
@@ -58,25 +67,25 @@ class GitSquashAddon(BaseAddon):
                 languages[code].extend(translation.filenames)
         return languages
 
+    def get_git_commit_messages(self, repository, log_format, remote, filenames):
+        command = [
+            "log",
+            f"--format={log_format}",
+            f"{remote}..HEAD",
+        ]
+        if filenames:
+            command += ["--"] + filenames
+
+        return repository.execute(command)
+
     def get_squash_commit_message(self, repository, log_format, remote, filenames=None):
         commit_message = self.instance.configuration.get("commit_message")
-
-        if not commit_message:
-            command = [
-                "log",
-                "--format={}".format(log_format),
-                "{}..HEAD".format(remote),
-            ]
-            if filenames:
-                command += ["--"] + filenames
-
-            commit_message = repository.execute(command)
 
         if self.instance.configuration.get("append_trailers", True):
             command = [
                 "log",
                 "--format=%(trailers)%nCo-authored-by: %an <%ae>",
-                "{}..HEAD".format(remote),
+                f"{remote}..HEAD",
             ]
             if filenames:
                 command += ["--"] + filenames
@@ -87,16 +96,33 @@ class GitSquashAddon(BaseAddon):
                 if trailer.strip()
             }
 
-            commit_message_lines_with_trailers_removed = [
-                line for line in commit_message.split("\n") if line not in trailer_lines
-            ]
-
-            commit_message = "\n\n".join(
-                [
-                    "\n".join(commit_message_lines_with_trailers_removed),
-                    "\n".join(sorted(trailer_lines)),
+            if commit_message:
+                # Predefined commit message
+                body = [commit_message]
+            else:
+                # Extract commit messages from the log
+                body = [
+                    line
+                    for line in self.get_git_commit_messages(
+                        repository, log_format, remote, filenames
+                    ).split("\n")
+                    if line not in trailer_lines
                 ]
+
+            commit_message = "\n".join(
+                chain(
+                    # Body
+                    body,
+                    # Blank line
+                    [""],
+                    # Trailers
+                    sorted(trailer_lines),
+                )
             ).strip("\n")
+        elif not commit_message:
+            commit_message = self.get_git_commit_messages(
+                repository, log_format, remote, filenames
+            )
 
         return commit_message
 
@@ -144,7 +170,7 @@ class GitSquashAddon(BaseAddon):
             x.split(None, 1)
             for x in reversed(
                 repository.execute(
-                    ["log", "--format=%H %aE", "{}..HEAD".format(remote)]
+                    ["log", "--format=%H %aE", f"{remote}..HEAD"]
                 ).splitlines()
             )
         ]
@@ -198,8 +224,10 @@ class GitSquashAddon(BaseAddon):
     def post_commit(self, component):
         repository = component.repository
         with repository.lock:
+            # Ensure repository is rebased on current remote prior to squash, otherwise
+            # we might be squashing upstream changes as well due to reset.
             if component.repo_needs_merge() and not component.update_branch(
-                method="rebase"
+                method="rebase", skip_push=True
             ):
                 return
             if not repository.needs_push():
@@ -214,4 +242,5 @@ class GitSquashAddon(BaseAddon):
                 template=component.addon_message,
                 extra_context={"addon_name": self.verbose},
                 signals=False,
+                skip_push=True,
             )

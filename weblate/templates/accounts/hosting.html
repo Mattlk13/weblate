@@ -10,100 +10,10 @@
 
 {% block content %}
 
-<div class="container">
-
 {% if billings %}
 <div class="panel panel-default">
   <div class="panel-heading"><h4 class="panel-title">{% trans "Trial subscriptions" %}</h4></div>
-  <div class="list-group">
-  {% for billing in billings %}
-    <div class="list-group-item">
-      <h4 class="list-group-item-heading" id="billing-{{ billing.pk }}">
-        {% if billing.projects_display %}{{ billing.projects_display }},{% endif %}
-        {{ billing.plan }}
-        {% if billing.expiry %}{% blocktrans with expires=billing.expiry|naturaltime %}, expires {{ expires }}{% endblocktrans %}{% endif %}
-        {% if billing.payment.libre_request %}
-          <span class="badge">{% trans "Pending approval" %}</span>
-        {% endif %}
-      </h4>
-      {% for owner in billing.owners.all %}
-        <p>
-          <span class="profile-icon">{% icon "account.svg" %}</span>
-          <span class="middle-dot-divider">
-            {{ owner }}
-          </span>
-          <span class="middle-dot-divider">
-            <a href="{{ owner.get_absolute_url }}">@{{ owner.username }}</a>
-          </span>
-          <span class="middle-dot-divider">
-            <a href="mailto:{{ owner.email }}">{{ owner.email }}</a>
-          </span>
-          {% if user.is_superuser %}
-          <span class="middle-dot-divider">
-            <a href="{% url "manage-users-check" %}?email={{ owner.email|urlencode }}">{% trans "Check user access" %}</a>
-          </span>
-          {% endif %}
-        </p>
-      {% endfor %}
-      {% for check in billing.libre_checklist %}
-        <p>
-          {% if check %}
-          <span class="green">{% icon "check.svg" %}</span>
-          {% else %}
-          <span class="red">{% icon "alert.svg" %}</span>
-          {% endif %}
-          {{ check }}
-        </p>
-        {% if check.component %}
-          <p>
-            {% icon "comment.svg" %}
-            <a href="{% url "guide" project=check.component.project.slug component=check.component.slug %}">{% trans "Unmet guidelines from the community localization checklist:" %}</a>
-
-            <ul>
-              {% for guide in check.component.guidelines %}
-                {% if guide.is_relevant and not guide.group and not guide.passed %}
-                  <li>{{ guide.description }}</li>
-                {% endif %}
-              {% endfor %}
-            </ul>
-          <p>
-          {% if check.component.agreement %}
-          <p>
-            {% icon "comment.svg" %}
-            <a href="{% url "component" project=check.component.project.slug component=check.component.slug %}#information">{% trans "Contributor agreement" %}</a>
-            {{ check.component.agreement|markdown }}
-          </p>
-          {% endif %}
-        {% endif %}
-      {% endfor %}
-      <form method="POST">
-        {% csrf_token %}
-        <input type="hidden" name="billing" value="{{ billing.pk }}" />
-      {% if billing.valid_libre %}
-        {% if user.is_superuser or not billing.payment.libre_request %}
-          <p>{% trans "Please check that following conditions are met:" %}<p>
-          <ul>
-            <li>{% trans "All the source code has to be publicly available in a supported version control system." %}</li>
-            <li>{% trans "Using Weblate has been approved by the upstream project." %}</li>
-            <li>{% trans "The project has had active development for at least three months." %}</li>
-          </ul>
-          {% if user.is_superuser %}
-            <input type="submit" class="btn btn-primary" name="approve" value="{% trans "Approve as libre" %}" />
-          {% else %}
-            {{ hosting_form|crispy }}
-            <input type="submit" class="btn btn-primary" name="request" value="{% trans "Request approval for libre hosting" %}" />
-          {% endif %}
-        {% endif %}
-      {% else %}
-        <p>{% trans "This subscription is not eligible to the libre plan, please fix the errors above or purchase a subscription." %}</p>
-      {% endif %}
-      {% if user.is_superuser %}
-        <input type="submit" class="btn btn-primary" name="extend" value="{% trans "Extend trial" %}" />
-      {% endif %}
-      </form>
-    </div>
-  {% endfor %}
-  </div>
+  {% include "billing/list.html" with objects=billings %}
 </div>
 {% endif %}
 
@@ -119,14 +29,11 @@
       </p>
 
       <ul>
-        <li>{% trans "Translated content has to be released under a license approved by OSI or recognized as libre by FSF." %}</li>
-        <li>{% trans "All the source code has to be publicly available in a supported version control system." %}</li>
-        <li>{% trans "Using Weblate has been approved by the upstream project." %}</li>
-        <li>{% trans "The project has had active development for at least three months." %}</li>
+        {% include "snippets/libre-basic.html" %}
         <li>{% trans "You will have 14 days to set up your project." %}</li>
-        <li>{% trans "Please request project approval once project setup is completed." %}</li>
+        <li>{% trans "Please request project approval once you finish the setup." %}</li>
         <li>{% trans "Unapproved projects will be removed." %}</li>
-        <li>{% trans "There is no guarantee of service availability, nor quality." %}</li>
+        <li>{% trans "There is no guarantee of service availability, nor quality for free service plan." %}</li>
       </ul>
 
     </div>
@@ -146,8 +53,6 @@
   <div class="panel-footer">
     <a class="btn btn-primary" href="{% url 'trial' %}">{% trans "Gratis trial" %}</a>
   </div>
-</div>
-
 </div>
 
 {% endblock %}

@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -50,9 +50,9 @@ class ScreenshotForm(forms.ModelForm):
             "translation": LanguageChoiceField,
         }
 
-    def __init__(self, component, data=None, files=None, instance=None):
+    def __init__(self, component, data=None, files=None, instance=None, initial=None):
         self.component = component
-        super().__init__(data=data, files=files, instance=instance)
+        super().__init__(data=data, files=files, instance=instance, initial=initial)
         self.fields[
             "translation"
         ].queryset = component.translation_set.prefetch_related("language")

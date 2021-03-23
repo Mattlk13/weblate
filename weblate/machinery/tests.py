@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -24,7 +24,6 @@ from unittest.mock import Mock, patch
 
 import responses
 from botocore.stub import ANY, Stubber
-from django.conf import settings
 from django.test import TestCase
 from django.test.utils import override_settings
 from google.cloud.translate_v3 import (
@@ -64,6 +63,7 @@ from weblate.machinery.youdao import YoudaoTranslation
 from weblate.trans.models.unit import Unit
 from weblate.trans.tests.test_views import FixtureTestCase
 from weblate.trans.tests.utils import get_test_file
+from weblate.utils.db import using_postgresql
 from weblate.utils.state import STATE_TRANSLATED
 
 GLOSBE_JSON = {
@@ -154,7 +154,7 @@ SAPTRANSLATIONHUB_JSON = {
     ]
 }
 
-TERMINOLOGY_LANGUAGES = """
+TERMINOLOGY_LANGUAGES = b"""
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
   <s:Body>
     <GetLanguagesResponse xmlns="http://api.terminology.microsoft.com/terminology">
@@ -217,8 +217,8 @@ TERMINOLOGY_LANGUAGES = """
     </GetLanguagesResponse>
   </s:Body>
 </s:Envelope>
-""".encode()
-TERMINOLOGY_TRANSLATE = """
+"""
+TERMINOLOGY_TRANSLATE = b"""
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
   <s:Body>
     <GetTranslationsResponse xmlns="http://api.terminology.microsoft.com/terminology">
@@ -257,7 +257,7 @@ TERMINOLOGY_TRANSLATE = """
     </GetTranslationsResponse>
   </s:Body>
 </s:Envelope>
-""".encode()
+"""
 TERMINOLOGY_WDSL = get_test_file("microsoftterminology.wsdl")
 
 GOOGLEV3_KEY = get_test_file("googlev3.json")
@@ -315,11 +315,11 @@ class BaseMachineTranslationTest(TestCase):
             for key, value in result.items():
                 if key == "quality":
                     self.assertIsInstance(
-                        value, int, "'{}' is supposed to be a integer".format(key)
+                        value, int, f"'{key}' is supposed to be a integer"
                     )
                 else:
                     self.assertIsInstance(
-                        value, str, "'{}' is supposed to be a string".format(key)
+                        value, str, f"'{key}' is supposed to be a string"
                     )
 
     def mock_empty(self):
@@ -342,6 +342,16 @@ class BaseMachineTranslationTest(TestCase):
         self.assert_translate(
             self.SUPPORTED, self.SOURCE_TRANSLATED, self.EXPECTED_LEN, **kwargs
         )
+
+    @responses.activate
+    def test_batch(self, machine=None):
+        self.mock_response()
+        if machine is None:
+            machine = self.get_machine()
+        unit = MockUnit(code=self.SUPPORTED, source=self.SOURCE_TRANSLATED)
+        machine.batch_translate([unit])
+        self.assertNotEqual(unit.machinery["best"], -1)
+        self.assertIn("translation", unit.machinery)
 
     @responses.activate
     def test_error(self):
@@ -1022,7 +1032,6 @@ class AWSTranslationTest(BaseMachineTranslationTest):
     def mock_response(self):
         pass
 
-    @responses.activate
     def test_translate(self, **kwargs):
         machine = self.get_machine()
         with Stubber(machine.client) as stubber:
@@ -1042,6 +1051,42 @@ class AWSTranslationTest(BaseMachineTranslationTest):
                 machine=machine,
             )
 
+    def test_translate_language_map(self, **kwargs):
+        machine = self.get_machine()
+        with Stubber(machine.client) as stubber:
+            stubber.add_response(
+                "translate_text",
+                {
+                    "TranslatedText": "Ahoj",
+                    "SourceLanguageCode": "en",
+                    "TargetLanguageCode": "cs",
+                },
+                {"SourceLanguageCode": ANY, "TargetLanguageCode": ANY, "Text": ANY},
+            )
+            unit = MockUnit(code="cs_CZ", source="Hello")
+            unit.translation.component.source_language.code = "en_US"
+            translation = machine.translate(unit)
+            self.assertIsInstance(translation, list)
+            self.assertEqual(
+                translation,
+                [{"text": "Ahoj", "quality": 88, "service": "AWS", "source": "Hello"}],
+            )
+
+    def test_batch(self, machine=None):
+        if machine is None:
+            machine = self.get_machine()
+        with Stubber(machine.client) as stubber:
+            stubber.add_response(
+                "translate_text",
+                {
+                    "TranslatedText": "Hallo",
+                    "SourceLanguageCode": "en",
+                    "TargetLanguageCode": "de",
+                },
+                {"SourceLanguageCode": ANY, "TargetLanguageCode": ANY, "Text": ANY},
+            )
+            super().test_batch(machine=machine)
+
 
 class WeblateTranslationTest(FixtureTestCase):
     @classmethod
@@ -1050,7 +1095,7 @@ class WeblateTranslationTest(FixtureTestCase):
         # well inside a transaction, so we avoid using transactions for
         # tests. Otherwise we end up with no matches for the query.
         # See https://dev.mysql.com/doc/refman/5.6/en/innodb-fulltext-index.html
-        if settings.DATABASES["default"]["ENGINE"] == "django.db.backends.mysql":
+        if not using_postgresql():
             return False
         return super()._databases_support_transactions()
 

@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -35,9 +35,10 @@ from weblate.accounts.notifications import (
     FREQ_NONE,
     FREQ_WEEKLY,
     SCOPE_ADMIN,
+    SCOPE_ALL,
     SCOPE_COMPONENT,
-    SCOPE_DEFAULT,
     SCOPE_PROJECT,
+    SCOPE_WATCHED,
     MergeFailureNotification,
 )
 from weblate.accounts.tasks import (
@@ -88,7 +89,7 @@ class NotificationTest(ViewTestCase, RegistrationTestMixin):
         for notification in notifications:
             Subscription.objects.create(
                 user=self.user,
-                scope=SCOPE_DEFAULT,
+                scope=SCOPE_WATCHED,
                 notification=notification,
                 frequency=FREQ_INSTANT,
             )
@@ -126,7 +127,7 @@ class NotificationTest(ViewTestCase, RegistrationTestMixin):
         Subscription.objects.filter(notification="LockNotification").delete()
         Subscription.objects.create(
             user=self.user,
-            scope=SCOPE_DEFAULT,
+            scope=SCOPE_WATCHED,
             notification="LockNotification",
             frequency=FREQ_INSTANT,
             onetime=True,
@@ -332,7 +333,7 @@ class NotificationTest(ViewTestCase, RegistrationTestMixin):
 
     def test_notify_new_comment_mention(self):
         self.test_notify_new_comment(
-            2, "Hello @{} and @invalid".format(self.anotheruser.username)
+            2, f"Hello @{self.anotheruser.username} and @invalid"
         )
 
     def test_notify_new_comment_author(self):
@@ -435,7 +436,7 @@ class NotificationTest(ViewTestCase, RegistrationTestMixin):
 
         # Trigger notification
         notify()
-        self.validate_notifications(1, "[Weblate] Digest: {}".format(subj))
+        self.validate_notifications(1, f"[Weblate] Digest: {subj}")
         content = mail.outbox[0].alternatives[0][0]
         self.assertNotIn('img src="/', content)
 
@@ -456,14 +457,14 @@ class NotificationTest(ViewTestCase, RegistrationTestMixin):
         subj="4 strings needing action in Test/Test",
     ):
         self.user.subscription_set.create(
-            scope=SCOPE_DEFAULT, notification=notification, frequency=frequency
+            scope=SCOPE_WATCHED, notification=notification, frequency=frequency
         )
         # Check mail
         self.assertEqual(len(mail.outbox), 0)
 
         # Trigger notification
         notify()
-        self.validate_notifications(1, "[Weblate] {}".format(subj))
+        self.validate_notifications(1, f"[Weblate] {subj}")
 
     def test_reminder_weekly(self):
         self.test_reminder(FREQ_WEEKLY, notify_weekly)
@@ -500,7 +501,7 @@ class SubscriptionTest(ViewTestCase):
         self.assertEqual(len(self.get_users(FREQ_MONTHLY)), 0)
         # Default subscription
         self.user.subscription_set.create(
-            scope=SCOPE_DEFAULT,
+            scope=SCOPE_WATCHED,
             notification=self.notification.get_name(),
             frequency=FREQ_MONTHLY,
         )
@@ -554,6 +555,22 @@ class SubscriptionTest(ViewTestCase):
         self.assertEqual(len(self.get_users(FREQ_WEEKLY)), 0)
         self.assertEqual(len(self.get_users(FREQ_MONTHLY)), 0)
 
+    def test_all_scope(self):
+        self.user.subscription_set.all().delete()
+        self.assertEqual(len(self.get_users(FREQ_INSTANT)), 0)
+        self.assertEqual(len(self.get_users(FREQ_DAILY)), 0)
+        self.assertEqual(len(self.get_users(FREQ_WEEKLY)), 0)
+        self.assertEqual(len(self.get_users(FREQ_MONTHLY)), 0)
+        self.user.subscription_set.create(
+            scope=SCOPE_ALL,
+            notification=self.notification.get_name(),
+            frequency=FREQ_MONTHLY,
+        )
+        self.assertEqual(len(self.get_users(FREQ_INSTANT)), 0)
+        self.assertEqual(len(self.get_users(FREQ_DAILY)), 0)
+        self.assertEqual(len(self.get_users(FREQ_WEEKLY)), 0)
+        self.assertEqual(len(self.get_users(FREQ_MONTHLY)), 1)
+
     def test_skip(self):
         self.user.profile.watched.add(self.project)
         # Not subscriptions
@@ -561,14 +578,14 @@ class SubscriptionTest(ViewTestCase):
         self.assertEqual(len(self.get_users(FREQ_INSTANT)), 0)
         # Default subscription
         self.user.subscription_set.create(
-            scope=SCOPE_DEFAULT,
+            scope=SCOPE_WATCHED,
             notification=self.notification.get_name(),
             frequency=FREQ_INSTANT,
         )
         self.assertEqual(len(self.get_users(FREQ_INSTANT)), 1)
         # Subscribe to parent event
         self.user.subscription_set.create(
-            scope=SCOPE_DEFAULT,
+            scope=SCOPE_WATCHED,
             notification="NewAlertNotificaton",
             frequency=FREQ_INSTANT,
         )

@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -91,7 +91,7 @@ class BaseAddon:
             if cls.repo_scope and component.linked_component:
                 component = component.linked_component
             # Clear addon cache
-            component.addons_cache = None
+            component.drop_addons_cache()
         return Addon(
             component=component,
             name=cls.name,
@@ -109,23 +109,26 @@ class BaseAddon:
         return result
 
     @classmethod
-    def get_add_form(cls, component, **kwargs):
+    def get_add_form(cls, user, component, **kwargs):
         """Return configuration form for adding new addon."""
         if cls.settings_form is None:
             return None
         storage = cls.create_object(component)
         instance = cls(storage)
         # pylint: disable=not-callable
-        return cls.settings_form(instance, **kwargs)
+        return cls.settings_form(user, instance, **kwargs)
 
-    def get_settings_form(self, **kwargs):
-        """Return configuration for for this addon."""
+    def get_settings_form(self, user, **kwargs):
+        """Return configuration form for this addon."""
         if self.settings_form is None:
             return None
         if "data" not in kwargs:
             kwargs["data"] = self.instance.configuration
         # pylint: disable=not-callable
-        return self.settings_form(self, **kwargs)
+        return self.settings_form(user, self, **kwargs)
+
+    def get_ui_form(self):
+        return self.get_settings_form(None)
 
     def configure(self, settings):
         """Save configuration."""
@@ -153,7 +156,8 @@ class BaseAddon:
                 self.post_commit(component)
         if EVENT_POST_UPDATE in self.events:
             for component in components:
-                self.post_update(component, "")
+                component.commit_pending("addon", None)
+                self.post_update(component, "", False)
         if EVENT_COMPONENT_UPDATE in self.events:
             for component in components:
                 self.component_update(component)
@@ -177,33 +181,59 @@ class BaseAddon:
         return True
 
     def pre_push(self, component):
+        """Hook triggered before repository is pushed upstream."""
         return
 
     def post_push(self, component):
+        """Hook triggered after repository is pushed upstream."""
         return
 
     def pre_update(self, component):
+        """Hook triggered before repository is updated from upstream."""
         return
 
-    def post_update(self, component, previous_head):
-        return
+    def post_update(self, component, previous_head: str, skip_push: bool):
+        """
+        Hook triggered after repository is updated from upstream.
 
-    def post_commit(self, component):
+        :param str previous_head: HEAD of the repository prior to update, can
+                                  be blank on initial clone.
+        :param bool skip_push: Whether the addon operation should skip pushing
+                               changes upstream. Usually you can pass this to
+                               underlying methods as commit_and_push or
+                               commit_pending.
+        """
         return
 
     def pre_commit(self, translation, author):
+        """Hook triggered before changes are committed to the repository."""
+        return
+
+    def post_commit(self, component):
+        """Hook triggered after changes are committed to the repository."""
         return
 
     def post_add(self, translation):
+        """Hook triggered after new translation is added."""
         return
 
     def unit_pre_create(self, unit):
+        """Hook triggered before new unit is created."""
         return
 
     def store_post_load(self, translation, store):
+        """
+        Hook triggered after a file is parsed.
+
+        It receives an instance of a file format class as a argument.
+
+        This is useful to modify file format class parameters, for example
+        adjust how the file will be saved.
+        """
         return
 
     def daily(self, component):
+        """Hook triggered daily."""
         return
 
     def component_update(self, component):
@@ -242,7 +272,9 @@ class BaseAddon:
         else:
             component.delete_alert(self.alert)
 
-    def commit_and_push(self, component, files: Optional[List[str]] = None):
+    def commit_and_push(
+        self, component, files: Optional[List[str]] = None, skip_push: bool = False
+    ):
         if files is None:
             files = list(
                 chain.from_iterable(
@@ -257,6 +289,7 @@ class BaseAddon:
                 template=component.addon_message,
                 extra_context={"addon_name": self.verbose},
                 files=files,
+                skip_push=skip_push,
             )
 
     def render_repo_filename(self, template, translation):
@@ -325,17 +358,24 @@ class UpdateBaseAddon(BaseAddon):
         super().__init__(storage)
         self.extra_files = []
 
+    @staticmethod
+    def iterate_translations(component):
+        yield from (
+            translation
+            for translation in component.translation_set.iterator()
+            if not translation.is_source or component.intermediate
+        )
+
     def update_translations(self, component, previous_head):
         raise NotImplementedError()
 
-    def post_update(self, component, previous_head):
-        component.commit_pending("addon", None, skip_push=True)
+    def post_update(self, component, previous_head: str, skip_push: bool):
         try:
             self.update_translations(component, previous_head)
         except FileParseError:
             # Ignore file parse error, it will be properly tracked as an alert
             pass
-        self.commit_and_push(component)
+        self.commit_and_push(component, skip_push=skip_push)
 
 
 class TestException(Exception):

@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -33,7 +33,7 @@ GOOGLE_API_ROOT = "https://translation.googleapis.com/language/translate/v2/"
 class GoogleBaseTranslation(MachineTranslation):
     # Map codes used by Google to the ones used by Weblate
     language_map = {
-        "nb": "no",
+        "nb_NO": "no",
         "fil": "tl",
         "zh_Hant": "zh-TW",
         "zh_Hans": "zh-CN",
@@ -68,7 +68,16 @@ class GoogleTranslation(GoogleBaseTranslation):
 
         return [d["language"] for d in payload["data"]["languages"]]
 
-    def download_translations(self, source, language, text, unit, user, search):
+    def download_translations(
+        self,
+        source,
+        language,
+        text: str,
+        unit,
+        user,
+        search: bool,
+        threshold: int = 75,
+    ):
         """Download list of possible translations from a service."""
         response = self.request(
             "get",

@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -22,7 +22,7 @@ import os.path
 from django.core import mail
 from django.urls import reverse
 
-from weblate.trans.models import Announcement, Component, Project
+from weblate.trans.models import Announcement, Component, Project, Translation
 from weblate.trans.tests.test_views import ViewTestCase
 from weblate.utils.data import data_dir
 from weblate.utils.files import remove_tree
@@ -62,6 +62,21 @@ class RemovalTest(ViewTestCase):
         )
         response = self.client.post(url, {"confirm": "test"}, follow=True)
         self.assertContains(response, "Project was scheduled for removal.")
+
+    def test_project_language(self):
+        self.make_manager()
+        self.assertEqual(Translation.objects.count(), 8)
+        url = reverse(
+            "remove-project-language",
+            kwargs={"project": self.project.slug, "lang": "cs"},
+        )
+        response = self.client.post(url, {"confirm": ""}, follow=True)
+        self.assertContains(
+            response, "The slug does not match the one marked for deletion!"
+        )
+        response = self.client.post(url, {"confirm": "test/cs"}, follow=True)
+        self.assertContains(response, "Language of the project was removed.")
+        self.assertEqual(Translation.objects.count(), 6)
 
 
 class RenameTest(ViewTestCase):

@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -237,6 +237,12 @@ class AdminTest(ViewTestCase):
         self.assertEqual(status.name, "community")
         self.assertFalse(BackupService.objects.exists())
 
+        self.assertFalse(status.discoverable)
+
+        self.client.post(reverse("manage-discovery"))
+        status = SupportStatus.objects.get()
+        self.assertTrue(status.discoverable)
+
     @responses.activate
     def test_activation_hosted(self):
         responses.add(
@@ -258,6 +264,12 @@ class AdminTest(ViewTestCase):
         backup = BackupService.objects.get()
         self.assertEqual(backup.repository, "/tmp/xxx")
         self.assertFalse(backup.enabled)
+
+        self.assertFalse(status.discoverable)
+
+        self.client.post(reverse("manage-discovery"))
+        status = SupportStatus.objects.get()
+        self.assertTrue(status.discoverable)
 
     def test_group_management(self):
         # Add form

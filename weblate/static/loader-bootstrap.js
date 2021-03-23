@@ -75,6 +75,16 @@ jQuery.fn.extend({
         this.value += myValue;
         this.focus();
       }
+      this.dispatchEvent(new Event("input"));
+      /* Zen editor still relies on jQuery here */
+      $(this).change();
+    });
+  },
+
+  replaceValue: function (myValue) {
+    return this.each(function () {
+      this.value = myValue;
+      this.dispatchEvent(new Event("input"));
     });
   },
 });
@@ -228,15 +238,19 @@ function loadTableSorting() {
         // skip empty cells and cells with icon (probably already processed)
         if (
           th.text() !== "" &&
-          !th.hasClass("sort-cell") &&
+          !th.hasClass("sort-init") &&
           !th.hasClass("sort-skip")
         ) {
           // Store index copy
           let myIndex = thIndex;
           // Add icon, title and class
-          th.attr("title", gettext("Sort this column"))
-            .addClass("sort-cell")
-            .append('<span class="sort-icon" />');
+          th.addClass("sort-init");
+          if (!th.hasClass("sort-cell")) {
+            // Skip statically initialized parts (when server side ordering is supported)
+            attr("title", gettext("Sort this column"))
+              .addClass("sort-cell")
+              .append('<span class="sort-icon" />');
+          }
 
           // Click handler
           th.click(function () {
@@ -338,6 +352,102 @@ function quoteSearch(value) {
   }
   /* We should do some escaping here */
   return value;
+}
+
+function initHighlight(root) {
+  if (typeof ResizeObserver === "undefined") {
+    return;
+  }
+  root.querySelectorAll(".highlight-editor").forEach(function (editor) {
+    var parent = editor.parentElement;
+    var hasFocus = editor == document.activeElement;
+
+    if (parent.classList.contains("editor-wrap")) {
+      return;
+    }
+
+    var mode = editor.getAttribute("data-mode");
+
+    /* Create wrapper element */
+    var wrapper = document.createElement("div");
+    wrapper.setAttribute("class", "editor-wrap");
+
+    /* Inject wrapper */
+    parent.replaceChild(wrapper, editor);
+
+    /* Create highlighter */
+    var highlight = document.createElement("div");
+    highlight.setAttribute("class", "highlighted-output");
+    if (editor.readOnly) {
+      highlight.classList.add("readonly");
+    }
+    highlight.setAttribute("role", "status");
+    if (editor.hasAttribute("dir")) {
+      highlight.setAttribute("dir", editor.getAttribute("dir"));
+    }
+    if (editor.hasAttribute("lang")) {
+      highlight.setAttribute("lang", editor.getAttribute("lang"));
+    }
+    wrapper.appendChild(highlight);
+
+    /* Add editor to wrapper */
+    wrapper.appendChild(editor);
+    if (hasFocus) {
+      editor.focus();
+    }
+
+    /* Content synchronisation and highlighting */
+    var languageMode = Prism.languages[mode];
+    if (editor.classList.contains("translation-editor")) {
+      let placeables = editor.getAttribute("data-placeables");
+      let extension = {
+        hlspace: {
+          pattern: /  +|(^) +| +(?=$)| +\n|\n +/,
+          lookbehind: true,
+        },
+      };
+      if (placeables) {
+        extension.placeable = RegExp(placeables);
+      }
+      /*
+       * We can not use Prism.extend here as we want whitespace highlighting
+       * to apply first. The code is borrowed from Prism.util.clone.
+       */
+      for (var key in languageMode) {
+        if (languageMode.hasOwnProperty(key)) {
+          extension[key] = Prism.util.clone(languageMode[key]);
+        }
+      }
+      languageMode = extension;
+    }
+    var syncContent = function () {
+      highlight.innerHTML = Prism.highlight(editor.value, languageMode, mode);
+      autosize.update(editor);
+    };
+    syncContent();
+    editor.addEventListener("input", syncContent);
+
+    /* Handle scrolling */
+    editor.addEventListener("scroll", (event) => {
+      highlight.scrollTop = editor.scrollTop;
+      highlight.scrollLeft = editor.scrollLeft;
+    });
+
+    /* Handle resizing */
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (let entry of entries) {
+        if (entry.target === editor) {
+          // match the height and width of the output area to the input area
+          highlight.style.height = editor.offsetHeight + "px";
+          highlight.style.width = editor.offsetWidth + "px";
+        }
+      }
+    });
+
+    resizeObserver.observe(editor);
+    /* Autosizing */
+    autosize(editor);
+  });
 }
 
 $(function () {
@@ -792,16 +902,18 @@ $(function () {
   $("[data-progress-url]").each(function () {
     var $progress = $(this);
     var $pre = $progress.find("pre"),
-      $bar = $progress.find(".progress-bar");
+      $bar = $progress.find(".progress-bar"),
+      url = $progress.data("progress-url");
+    var $form = $("#link-post");
 
     $pre.animate({ scrollTop: $pre.get(0).scrollHeight });
 
     var progress_interval = setInterval(function () {
-      $.get($progress.data("progress-url"), function (data) {
+      $.get(url, function (data) {
         $bar.width(data.progress + "%");
         $pre.text(data.log);
         $pre.animate({ scrollTop: $pre.get(0).scrollHeight });
-        if (!data.in_progress) {
+        if (data.completed) {
           clearInterval(progress_interval);
           if ($("#progress-redirect").prop("checked")) {
             window.location = $("#progress-return").attr("href");
@@ -809,6 +921,19 @@ $(function () {
         }
       });
     }, 1000);
+
+    $("#terminate-task-button").click((e) => {
+      fetch(url, {
+        method: "DELETE",
+        headers: {
+          Accept: "application/json",
+          "X-CSRFToken": $form.find("input").val(),
+        },
+      }).then((data) => {
+        window.location = $("#progress-return").attr("href");
+      });
+      e.preventDefault();
+    });
   });
 
   /* Generic messages progress */
@@ -821,7 +946,7 @@ $(function () {
         $bar.width(data.progress + "%");
         if (data.completed) {
           clearInterval(task_interval);
-          $message.text(data.result);
+          $message.text(data.result.message);
         }
       });
     }, 1000);
@@ -1021,6 +1146,67 @@ $(function () {
       );
     }
   );
+
+  /* Prefill adding to glossary with current string */
+  $("#add-glossary-form").on("shown.bs.modal", (e) => {
+    if (e.target.hasAttribute("data-shown")) {
+      return;
+    }
+    /* Relies on clone source implementation */
+    let source = JSON.parse(
+      document.querySelector("[data-content]").getAttribute("data-content")
+    );
+    if (source.length < 200) {
+      document.getElementById("id_source").value = source;
+      document.getElementById("id_target").value = document.querySelector(
+        ".translation-editor"
+      ).value;
+    }
+    e.target.setAttribute("data-shown", true);
+  });
+
+  /* Username autocompletion */
+  var tribute = new Tribute({
+    trigger: "@",
+    requireLeadingSpace: true,
+    menuShowMinLength: 2,
+    noMatchTemplate: function () {
+      return "";
+    },
+    menuItemTemplate: function (item) {
+      return `<a>${item.string}</a>`;
+    },
+    values: (text, callback) => {
+      $.ajax({
+        type: "GET",
+        url: `/api/users/?username=${text}`,
+        dataType: "json",
+        success: function (data) {
+          var userMentionList = data.results.map(function (user) {
+            return {
+              value: user.username,
+              key: `${user.full_name} (${user.username})`,
+            };
+          });
+          callback(userMentionList);
+        },
+        error: function (jqXHR, textStatus, errorThrown) {
+          console.error(errorThrown);
+        },
+      });
+    },
+  });
+  tribute.attach(document.querySelectorAll(".markdown-editor"));
+  document.querySelectorAll(".markdown-editor").forEach((editor) => {
+    editor.addEventListener("tribute-active-true", function (e) {
+      $(".tribute-container").addClass("open");
+      $(".tribute-container ul").addClass("dropdown-menu");
+    });
+  });
+
+  /* Textarea higlighting */
+  Prism.languages.none = {};
+  initHighlight(document);
 
   /* Warn users that they do not want to use developer console in most cases */
   console.log("%cStop!", "color: red; font-weight: bold; font-size: 50px;");

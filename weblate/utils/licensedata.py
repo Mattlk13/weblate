@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 - 2020 Michal Čihař <michal@cihar.com>
+# Copyright © 2012 - 2021 Michal Čihař <michal@cihar.com>
 #
 # This file is part of Weblate <https://weblate.org/>
 #
@@ -138,6 +138,12 @@ LICENSES = (
         False,
     ),
     (
+        "ANTLR-PD-fallback",
+        "ANTLR Software Rights Notice with license fallback",
+        "http://www.antlr2.org/license.html",
+        False,
+    ),
+    (
         "Apache-1.0",
         "Apache License 1.0",
         "http://www.apache.org/licenses/LICENSE-1.0",
@@ -226,7 +232,7 @@ LICENSES = (
         "Beerware",
         "Beerware License",
         "https://fedoraproject.org/wiki/Licensing/Beerware",
-        False,
+        True,
     ),
     (
         "BitTorrent-1.0",
@@ -289,6 +295,12 @@ LICENSES = (
         True,
     ),
     (
+        "BSD-3-Clause-Modification",
+        "BSD 3-Clause Modification",
+        "https://fedoraproject.org/wiki/Licensing:BSD#Modification_Variant",
+        False,
+    ),
+    (
         "BSD-3-Clause-No-Nuclear-License",
         "BSD 3-Clause No Nuclear License",
         "http://download.oracle.com/otn-pub/java/licenses/bsd.txt?AuthParam=1467140197_43d516ce1776bd08a58235a7785be1cc",
@@ -310,6 +322,12 @@ LICENSES = (
         "BSD-3-Clause-Open-MPI",
         "BSD 3-Clause Open MPI variant",
         "https://www.open-mpi.org/community/license.php",
+        False,
+    ),
+    (
+        "BSD-4-Clause-Shortened",
+        "BSD 4 Clause Shortened",
+        "https://metadata.ftp-master.debian.org/changelogs//main/a/arpwatch/arpwatch_2.1a15-7_copyright",
         False,
     ),
     (
@@ -349,6 +367,7 @@ LICENSES = (
         "http://www.freebsd.org/copyright/license.html",
         False,
     ),
+    ("BUSL-1.1", "Business Source License 1.1", "https://mariadb.com/bsl11/", False),
     (
         "bzip2-1.0.5",
         "bzip2 and libbzip2 License v1.0.5",
@@ -419,19 +438,19 @@ LICENSES = (
         "CERN-OHL-P-2.0",
         "CERN Open Hardware Licence Version 2 - Permissive",
         "https://www.ohwr.org/project/cernohl/wikis/Documents/CERN-OHL-version-2",
-        False,
+        True,
     ),
     (
         "CERN-OHL-S-2.0",
         "CERN Open Hardware Licence Version 2 - Strongly Reciprocal",
         "https://www.ohwr.org/project/cernohl/wikis/Documents/CERN-OHL-version-2",
-        False,
+        True,
     ),
     (
         "CERN-OHL-W-2.0",
         "CERN Open Hardware Licence Version 2 - Weakly Reciprocal",
         "https://www.ohwr.org/project/cernohl/wikis/Documents/CERN-OHL-version-2",
-        False,
+        True,
     ),
     (
         "ClArtistic",
@@ -501,6 +520,12 @@ LICENSES = (
         False,
     ),
     (
+        "C-UDA-1.0",
+        "Computational Use of Data Agreement v1.0",
+        "https://github.com/microsoft/Computational-Use-of-Data-Agreement/blob/master/C-UDA-1.0.md",
+        False,
+    ),
+    (
         "CATOSL-1.1",
         "Computer Associates Trusted Open Source License 1.1",
         "https://opensource.org/licenses/CATOSL-1.1",
@@ -549,10 +574,16 @@ LICENSES = (
         False,
     ),
     (
+        "CC-BY-3.0-US",
+        "Creative Commons Attribution 3.0 United States",
+        "https://creativecommons.org/licenses/by/3.0/us/legalcode",
+        False,
+    ),
+    (
         "CC-BY-3.0",
         "Creative Commons Attribution 3.0 Unported",
         "https://creativecommons.org/licenses/by/3.0/legalcode",
-        False,
+        True,
     ),
     (
         "CC-BY-4.0",
@@ -693,9 +724,21 @@ LICENSES = (
         False,
     ),
     (
+        "CC-BY-SA-2.0-UK",
+        "Creative Commons Attribution Share Alike 2.0 England and Wales",
+        "https://creativecommons.org/licenses/by-sa/2.0/uk/legalcode",
+        False,
+    ),
+    (
         "CC-BY-SA-2.0",
         "Creative Commons Attribution Share Alike 2.0 Generic",
         "https://creativecommons.org/licenses/by-sa/2.0/legalcode",
+        False,
+    ),
+    (
+        "CC-BY-SA-2.1-JP",
+        "Creative Commons Attribution Share Alike 2.1 Japan",
+        "https://creativecommons.org/licenses/by-sa/2.1/jp/legalcode",
         False,
     ),
     (
@@ -708,7 +751,7 @@ LICENSES = (
         "CC-BY-SA-3.0",
         "Creative Commons Attribution Share Alike 3.0 Unported",
         "https://creativecommons.org/licenses/by-sa/3.0/legalcode",
-        False,
+        True,
     ),
     (
         "CC-BY-SA-4.0",
@@ -769,6 +812,12 @@ LICENSES = (
         "curl",
         "curl License",
         "https://github.com/bagder/curl/blob/master/COPYING",
+        False,
+    ),
+    (
+        "DRL-1.0",
+        "Detection Rule License 1.0",
+        "https://github.com/Neo23x0/sigma/blob/master/LICENSE.Detection.Rules.md",
         False,
     ),
     (
@@ -920,6 +969,12 @@ LICENSES = (
         True,
     ),
     (
+        "FreeBSD-DOC",
+        "FreeBSD Documentation License",
+        "https://www.freebsd.org/copyright/freebsd-doc-license/",
+        False,
+    ),
+    (
         "FreeImage",
         "FreeImage Public License v1.0",
         "http://freeimage.sourceforge.net/freeimage-license.txt",
@@ -947,6 +1002,12 @@ LICENSES = (
         "FSFULLR",
         "FSF Unlimited License (with License Retention)",
         "https://fedoraproject.org/wiki/Licensing/FSF_Unlimited_License#License_Retention_Variant",
+        False,
+    ),
+    (
+        "GD",
+        "GD License",
+        "https://libgd.github.io/manuals/2.3.0/files/license-txt.html",
         False,
     ),
     (
@@ -1197,6 +1258,12 @@ LICENSES = (
         False,
     ),
     (
+        "HTMLTIDY",
+        "HTML Tidy License",
+        "https://github.com/htacg/tidy-html5/blob/next/README/LICENSE.md",
+        False,
+    ),
+    (
         "IBM-pibs",
         "IBM PowerPC Initialization and Boot Software",
         "http://git.denx.de/?p=u-boot.git;a=blob;f=arch/powerpc/cpu/ppc4xx/miiphy.c;h=297155fdafa064b955e53e9832de93bfb0cfb85b;hb=9fab4bf4cc077c21e43941866f3f2c196f28670d",
@@ -1423,7 +1490,19 @@ LICENSES = (
         False,
     ),
     ("MIT", "MIT License", "https://opensource.org/licenses/MIT", True),
+    (
+        "MIT-Modern-Variant",
+        "MIT License Modern Variant",
+        "https://fedoraproject.org/wiki/Licensing:MIT#Modern_Variants",
+        True,
+    ),
     ("MIT-0", "MIT No Attribution", "https://github.com/aws/mit-0", True),
+    (
+        "MIT-open-group",
+        "MIT Open Group variant",
+        "https://gitlab.freedesktop.org/xorg/app/iceauth/-/blob/master/COPYING",
+        False,
+    ),
     ("Motosoto", "Motosoto License", "https://opensource.org/licenses/Motosoto", True),
     (
         "MPL-1.0",
@@ -1459,6 +1538,12 @@ LICENSES = (
     ),
     ("Multics", "Multics License", "https://opensource.org/licenses/Multics", True),
     ("Mup", "Mup License", "https://fedoraproject.org/wiki/Licensing/Mup", False),
+    (
+        "NAIST-2003",
+        "Nara Institute of Science and Technology License (2003)",
+        "https://enterprise.dejacode.com/licenses/public/naist-2003/#license-text",
+        False,
+    ),
     (
         "NASA-1.3",
         "NASA Open Source Agreement 1.3",
@@ -1572,18 +1657,6 @@ LICENSES = (
         True,
     ),
     (
-        "ODbL-1.0",
-        "ODC Open Database License v1.0",
-        "http://www.opendatacommons.org/licenses/odbl/1.0/",
-        True,
-    ),
-    (
-        "PDDL-1.0",
-        "ODC Public Domain Dedication & License 1.0",
-        "http://opendatacommons.org/licenses/pddl/1.0/",
-        False,
-    ),
-    (
         "OGC-1.0",
         "OGC Software License, Version 1.0",
         "https://www.ogc.org/ogc/software/1.0",
@@ -1599,6 +1672,18 @@ LICENSES = (
         "ODC-By-1.0",
         "Open Data Commons Attribution License v1.0",
         "https://opendatacommons.org/licenses/by/1.0/",
+        False,
+    ),
+    (
+        "ODbL-1.0",
+        "Open Data Commons Open Database License v1.0",
+        "http://www.opendatacommons.org/licenses/odbl/1.0/",
+        True,
+    ),
+    (
+        "PDDL-1.0",
+        "Open Data Commons Public Domain Dedication & License 1.0",
+        "http://opendatacommons.org/licenses/pddl/1.0/",
         False,
     ),
     (
@@ -1725,7 +1810,7 @@ LICENSES = (
         "OLDAP-2.8",
         "Open LDAP Public License v2.8",
         "http://www.openldap.org/software/release/license.html",
-        False,
+        True,
     ),
     (
         "OML",
@@ -2093,6 +2178,12 @@ LICENSES = (
         True,
     ),
     (
+        "OGDL-Taiwan-1.0",
+        "Taiwan Open Government Data License, version 1.0",
+        "https://data.gov.tw/license",
+        False,
+    ),
+    (
         "TAPR-OHL-1.0",
         "TAPR Open Hardware License v1.0",
         "https://www.tapr.org/OHL",
@@ -2154,7 +2245,7 @@ LICENSES = (
         "Unicode-DFS-2016",
         "Unicode License Agreement - Data Files and Software (2016)",
         "http://www.unicode.org/copyright.html",
-        False,
+        True,
     ),
     (
         "Unicode-TOU",
